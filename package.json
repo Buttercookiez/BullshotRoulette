@@ -1,0 +1,27 @@
+{
+  "name": "revolver-roulette",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Revolver Roulette - a 2D stylized, turn-based dueling game (single-player prototype).",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest --run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "howler": "^2.2.4",
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.12",
+    "fast-check": "^3.23.2",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

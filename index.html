@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Revolver Roulette</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #050506;
+        color: #c8c8c8;
+        font-family: "Courier New", monospace;
+        overflow: hidden;
+      }
+      #app {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .rr-controls {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+      }
+      .rr-status {
+        font-size: 16px;
+        letter-spacing: 3px;
+        color: #7ec850;
+        text-transform: uppercase;
+      }
+      .rr-info {
+        font-size: 12px;
+        letter-spacing: 1px;
+        color: #8a8a8a;
+      }
+      .rr-row {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 8px;
+      }
+      .rr-btn {
+        font-family: "Courier New", monospace;
+        font-size: 12px;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+        color: #cdc6b8;
+        background: #1b1f24;
+        border: 2px solid #000;
+        border-radius: 6px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      .rr-btn:hover:not(:disabled) {
+        border-color: #7ec850;
+        color: #fff;
+      }
+      .rr-btn:disabled {
+        opacity: 0.35;
+        cursor: not-allowed;
+      }
+      .rr-item {
+        border-color: #7ec850;
+      }
+      .rr-new-match {
+        border-color: #8e2b22;
+        color: #e0a59f;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
