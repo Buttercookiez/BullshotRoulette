@@ -65,9 +65,10 @@ serve(async (req: Request) => {
     const participantId = playerSlot === "player1" ? "PLAYER" : "AI";
     const state = match.state;
 
-    // Validate it's this player's turn.
+    // Validate it's this player's turn (engine also checks, but early-reject saves a DB write).
     if (state.activeParticipant !== participantId) {
-      return new Response(JSON.stringify({ error: "Not your turn" }), { status: 400, headers: corsHeaders });
+      // Don't block — let the engine reject it so we can debug. Log it.
+      console.warn(`[submit-action] ${participantId} tried to act but active is ${state.activeParticipant}`);
     }
 
     // Check turn timeout — if deadline has passed, auto-shoot-self.

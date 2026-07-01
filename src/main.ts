@@ -49,6 +49,16 @@ function resolveRng(): RNG {
   return new SystemRng();
 }
 
+/** Get or create a persistent player ID for this browser session. */
+function getOrCreatePlayerId(): string {
+  let id = sessionStorage.getItem("rr_player_id");
+  if (!id) {
+    id = crypto.randomUUID();
+    sessionStorage.setItem("rr_player_id", id);
+  }
+  return id;
+}
+
 /** Build the page layout: a fullscreen canvas host plus a bottom controls overlay. */
 function buildLayout(app: HTMLElement): {
   canvasHost: HTMLElement;
@@ -372,7 +382,7 @@ async function bootstrap(): Promise<void> {
             renderer,
             audio,
             caption,
-            playerId: crypto.randomUUID(), // TODO: replace with wallet address
+            playerId: getOrCreatePlayerId(),
             betAmount: bet,
             onMatchStart: () => {
               caption.enqueue("MATCH STARTED", "Click the gun to aim.");
