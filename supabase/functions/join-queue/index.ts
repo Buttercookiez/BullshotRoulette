@@ -10,12 +10,23 @@ import { createMatch, DEFAULT_CONFIG, SystemRng } from "../_shared/engine.ts";
 
 const TURN_TIMEOUT_SEC = 30;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 interface JoinPayload {
   player_id: string;
   bet_amount: number;
 }
 
 serve(async (req: Request) => {
+  // Handle CORS preflight.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     const { player_id, bet_amount } = (await req.json()) as JoinPayload;
 

@@ -12,6 +12,12 @@ import { reduce, SystemRng, type GameState, type Action } from "../_shared/engin
 
 const TURN_TIMEOUT_SEC = 30;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 interface ActionPayload {
   match_id: string;
   player_id: string;
@@ -19,6 +25,11 @@ interface ActionPayload {
 }
 
 serve(async (req: Request) => {
+  // Handle CORS preflight.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     const { match_id, player_id, action } = (await req.json()) as ActionPayload;
 
