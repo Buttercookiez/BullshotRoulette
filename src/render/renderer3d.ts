@@ -294,6 +294,10 @@ export class Renderer3D implements IRenderer {
   private spinToken: THREE.Group | undefined;
   // Live affordance flags, refreshed every render(state).
   private localParticipant: "PLAYER" | "AI" = "PLAYER";
+  // When true (player2 / the "AI" seat in multiplayer), the ENTIRE camera is
+  // reflected 180° about the table centre so this client sits on the opposite
+  // side and looks back. Applied uniformly to every shot at the final frame.
+  private mirrorCam = false;
   private playerTurn = false;
   private matchOver = false;
   private roundsRemaining = 0;
@@ -1420,28 +1424,26 @@ export class Renderer3D implements IRenderer {
   /** Set which participant the local player controls (for multiplayer). */
   setLocalParticipant(p: "PLAYER" | "AI"): void {
     this.localParticipant = p;
-    // If we're player2 ("AI"), flip the camera to the other side of the table.
-    if (p === "AI" && this.camera) {
-      // Mirror the base camera to the dealer's side.
-      CAM_FP.pos.z = -CAM_FP.pos.z;
-      CAM_FP.look.z = -CAM_FP.look.z;
-    }
+    // Player2 controls the "AI" seat: mirror the WHOLE camera to the opposite
+    // side of the table. Done via `mirrorCam` in updateCamera (see below) so
+    // every framed shot — intro, aim, shots, deaths — is reflected uniformly.
+    // (We must NOT mutate the shared CAM_FP constant: it double-flips and only
+    // covers the idle base shot.)
+    this.mirrorCam = p === "AI";
   }
 
   /**
-   * Map a click-target to the correct engine ParticipantId based on who we are.
-   * "Shoot the figure across the table" = shoot opponent.
-   * "Shoot self ring" = shoot yourself.
+   * Map a click-target to the correct engine ParticipantId.
+   *
+   * Each target marker is attached to a PHYSICAL figure: the dealer marker to
+   * the AI figure, the self marker to the PLAYER figure. The figure a player
+   * clicks therefore already IS the participant to hit — the mapping is the
+   * identity for BOTH seats. (Player2's camera is mirrored, so the figure that
+   * appears "across the table" is the PLAYER figure, and clicking it correctly
+   * targets PLAYER.)
    */
   private mapTarget(clickTarget: "PLAYER" | "AI"): "PLAYER" | "AI" {
-    if (this.localParticipant === "PLAYER") {
-      // Normal: clicking dealer ring = shoot AI, clicking self ring = shoot PLAYER.
-      return clickTarget === "AI" ? "AI" : "PLAYER";
-    } else {
-      // Flipped: we ARE "AI", so clicking the figure across = shoot PLAYER (opponent).
-      // Clicking self = shoot AI (us).
-      return clickTarget === "AI" ? "PLAYER" : "AI";
-    }
+    return clickTarget;
   }
 
   /** Play the intro zoom-out from the table on page load. */
@@ -2198,8 +2200,25 @@ export class Renderer3D implements IRenderer {
       cam.rotation.z = 0;
     }
 
-    cam.position.set(this.camPos.x + sx, this.camPos.y + sy, this.camPos.z);
-    cam.lookAt(this.camLook);
+    let finalX = this.camPos.x + sx;
+    const finalY = this.camPos.y + sy;
+    let finalZ = this.camPos.z;
+    let lookX = this.camLook.x;
+    const lookY = this.camLook.y;
+    let lookZ = this.camLook.z;
+
+    // Player2 (the "AI" seat): reflect the whole rig 180° about the table
+    // centre so this client sits on the opposite side and looks back. This is
+    // the single, uniform mirror for EVERY shot — no per-shot bookkeeping.
+    if (this.mirrorCam) {
+      finalX = -finalX;
+      finalZ = -finalZ;
+      lookX = -lookX;
+      lookZ = -lookZ;
+    }
+
+    cam.position.set(finalX, finalY, finalZ);
+    cam.lookAt(lookX, lookY, lookZ);
   }
 
   // -------------------------------------------------------------------------
