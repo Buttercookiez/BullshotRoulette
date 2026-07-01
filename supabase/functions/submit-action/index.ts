@@ -47,18 +47,18 @@ serve(async (req: Request) => {
       .single();
 
     if (matchErr || !match) {
-      return new Response(JSON.stringify({ error: "Match not found" }), { status: 404 });
+      return new Response(JSON.stringify({ error: "Match not found" }), { status: 404, headers: corsHeaders });
     }
 
     if (match.status !== "active") {
-      return new Response(JSON.stringify({ error: "Match is not active" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Match is not active" }), { status: 400, headers: corsHeaders });
     }
 
     // Determine which player slot this is (player1 or player2).
     let playerSlot: "player1" | "player2";
     if (player_id === match.player1_id) playerSlot = "player1";
     else if (player_id === match.player2_id) playerSlot = "player2";
-    else return new Response(JSON.stringify({ error: "Not a participant" }), { status: 403 });
+    else return new Response(JSON.stringify({ error: "Not a participant" }), { status: 403, headers: corsHeaders });
 
     // Map player slots to engine ParticipantIds.
     // player1 = "PLAYER", player2 = "AI" (reusing the engine's two-participant model).
@@ -67,7 +67,7 @@ serve(async (req: Request) => {
 
     // Validate it's this player's turn.
     if (state.activeParticipant !== participantId) {
-      return new Response(JSON.stringify({ error: "Not your turn" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Not your turn" }), { status: 400, headers: corsHeaders });
     }
 
     // Check turn timeout — if deadline has passed, auto-shoot-self.
@@ -83,7 +83,7 @@ serve(async (req: Request) => {
     const result = reduce(state as GameState, action as Action, rng);
 
     if (result.rejected) {
-      return new Response(JSON.stringify({ error: "Action rejected", reason: result.rejected }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Action rejected", reason: result.rejected }), { status: 400, headers: corsHeaders });
     }
 
     // Set the new turn deadline (30s from now for the next active player).
@@ -128,8 +128,8 @@ serve(async (req: Request) => {
       },
     });
 
-    return new Response(JSON.stringify({ ok: true, events: result.events }), { status: 200 });
+    return new Response(JSON.stringify({ ok: true, events: result.events, state: newState }), { status: 200, headers: corsHeaders });
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: corsHeaders });
   }
 });

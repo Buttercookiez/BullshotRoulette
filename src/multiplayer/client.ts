@@ -31,6 +31,7 @@ export class MultiplayerClient {
   private channel: RealtimeChannel | null = null;
   private queueChannel: RealtimeChannel | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private matchPollTimer: ReturnType<typeof setInterval> | null = null;
   private timerInterval: ReturnType<typeof setInterval> | null = null;
   private turnDeadline: number | null = null;
   private config: MultiplayerConfig;
@@ -112,27 +113,28 @@ export class MultiplayerClient {
       this.queueChannel = null;
     }
 
-    // Subscribe to match updates for real-time game events.
-    this.channel = this.supabase
-      .channel(`match-watch-${matchId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "matches",
-          filter: `id=eq.${matchId}`,
-        },
-        (payload: any) => {
-          const row = payload.new;
-          this.handleGameEvents({
-            events: [], // Events come from the state diff
-            state: row.state,
-            turn_deadline: row.turn_deadline,
-          });
-        },
-      )
-      .subscribe();
+    // Poll the match state every 1.5s for updates (reliable fallback).
+    let lastStateJson = JSON.stringify(match.state);
+    this.matchPollTimer = setInterval(async () => {
+      const { data: row } = await this.supabase
+        .from("matches")
+        .select("state, turn_deadline, status, winner_id")
+        .eq("id", matchId)
+        .single();
+      if (!row) return;
+      const newJson = JSON.stringify(row.state);
+      if (newJson !== lastStateJson) {
+        lastStateJson = newJson;
+        this.handleGameEvents({
+          events: [],
+          state: row.state,
+          turn_deadline: row.turn_deadline,
+        });
+        if (row.status === "finished") {
+          if (this.matchPollTimer) clearInterval(this.matchPollTimer);
+        }
+      }
+    }, 1500);
 
     this.config.onMatched({
       matchId,
@@ -159,7 +161,7 @@ export class MultiplayerClient {
   async submitAction(action: Action): Promise<void> {
     if (!this.matchId) return;
 
-    const { error } = await this.supabase.functions.invoke("submit-action", {
+    const { data, error } = await this.supabase.functions.invoke("submit-action", {
       body: {
         match_id: this.matchId,
         player_id: this.playerId,
@@ -168,7 +170,17 @@ export class MultiplayerClient {
     });
 
     if (error) {
-      console.warn("[multiplayer] action rejected:", error.message);
+      console.warn("[multiplayer] action error:", error.message);
+      return;
+    }
+
+    // The acting player gets events back immediately from the response.
+    if (data?.events && data.events.length > 0) {
+      this.config.onEvents(data.events);
+    }
+    // Also update the state from the response for instant feedback.
+    if (data?.state) {
+      this.config.onStateChange(data.state as GameState);
     }
   }
 
@@ -178,6 +190,7 @@ export class MultiplayerClient {
     if (this.queueChannel) this.supabase.removeChannel(this.queueChannel);
     if (this.timerInterval) clearInterval(this.timerInterval);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.matchPollTimer) clearInterval(this.matchPollTimer);
   }
 
   // --- Private ---
