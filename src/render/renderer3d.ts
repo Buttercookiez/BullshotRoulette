@@ -293,6 +293,7 @@ export class Renderer3D implements IRenderer {
   private selfMarker: THREE.Group | undefined;
   private spinToken: THREE.Group | undefined;
   // Live affordance flags, refreshed every render(state).
+  private localParticipant: "PLAYER" | "AI" = "PLAYER";
   private playerTurn = false;
   private matchOver = false;
   private roundsRemaining = 0;
@@ -616,7 +617,7 @@ export class Renderer3D implements IRenderer {
 
     // Refresh interaction affordances.
     this.matchOver = vm.matchOver;
-    this.playerTurn = !vm.matchOver && vm.activeParticipant === "PLAYER";
+    this.playerTurn = !vm.matchOver && vm.activeParticipant === this.localParticipant;
     this.roundsRemaining = vm.roundsRemaining;
     this.spinAllowed =
       this.playerTurn &&
@@ -1413,6 +1414,11 @@ export class Renderer3D implements IRenderer {
         animate();
       };
     });
+  }
+
+  /** Set which participant the local player controls (for multiplayer). */
+  setLocalParticipant(p: "PLAYER" | "AI"): void {
+    this.localParticipant = p;
   }
 
   /** Play the intro zoom-out from the table on page load. */

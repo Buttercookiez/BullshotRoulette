@@ -23,7 +23,6 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
 
   let cancelled = false;
   let matchStarted = false;
-  let myTurn = false;
   let youAre: "player1" | "player2" = "player1";
 
   // Turn timer display.
@@ -41,10 +40,6 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
 
     onStateChange: (state: GameState) => {
       if (cancelled) return;
-      // In multiplayer, "PLAYER" = player1, "AI" = player2.
-      // Determine if it's MY turn.
-      const myParticipant = youAre === "player1" ? "PLAYER" : "AI";
-      myTurn = state.activeParticipant === myParticipant && state.winner === null;
       renderer.render(state);
     },
 
@@ -73,6 +68,10 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
       if (cancelled) return;
       youAre = data.youAre;
 
+      // Tell the renderer which participant we control.
+      const myParticipant = youAre === "player1" ? "PLAYER" : "AI";
+      renderer.setLocalParticipant(myParticipant as "PLAYER" | "AI");
+
       caption.enqueue("OPPONENT FOUND", "The table awaits.");
       await new Promise((r) => setTimeout(r, 2000));
       if (cancelled) return;
@@ -94,7 +93,6 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
       if (cancelled) return;
 
       matchStarted = true;
-      myTurn = youFirst;
       onMatchStart();
     },
 
@@ -121,7 +119,7 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
       if (timerEl.parentNode) timerEl.parentNode.removeChild(timerEl);
     },
     submitAction: (action: Action) => {
-      if (!matchStarted || !myTurn || cancelled) return;
+      if (!matchStarted || cancelled) return;
       client.submitAction(action);
     },
   };
