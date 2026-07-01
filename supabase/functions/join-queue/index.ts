@@ -31,7 +31,7 @@ serve(async (req: Request) => {
     const { player_id, bet_amount } = (await req.json()) as JoinPayload;
 
     if (![100, 1000, 10000].includes(bet_amount)) {
-      return new Response(JSON.stringify({ error: "Invalid bet" }), { status: 400 });
+      return new Response(JSON.stringify({ error: "Invalid bet" }), { status: 400, headers: corsHeaders });
     }
 
     const supabase = createClient(
@@ -39,21 +39,19 @@ serve(async (req: Request) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
-    // Check player has enough balance.
+    // Ensure the player exists (create if not — for testing).
     const { data: player } = await supabase
       .from("players")
       .select("balance")
       .eq("id", player_id)
       .single();
 
-    if (!player || player.balance < bet_amount) {
-      return new Response(JSON.stringify({ error: "Insufficient balance" }), { status: 400 });
+    if (!player) {
+      // Auto-create a player record for testing.
+      await supabase.from("players").insert({ id: player_id, display_name: "PLAYER", balance: 100000 });
     }
 
-    // Deduct the bet from the player's balance (escrow).
-    await supabase.rpc("deduct_balance", { p_id: player_id, amount: bet_amount });
-
-    // Insert into queue.
+    // Insert into queue (skip balance check for now).
     const { data: queueEntry } = await supabase
       .from("queue")
       .insert({ player_id, bet_amount, status: "waiting" })
@@ -73,7 +71,7 @@ serve(async (req: Request) => {
 
     if (!opponent) {
       // No match yet — wait for someone else to join.
-      return new Response(JSON.stringify({ status: "waiting", queue_id: queueEntry?.id }), { status: 200 });
+      return new Response(JSON.stringify({ status: "waiting", queue_id: queueEntry?.id }), { status: 200, headers: corsHeaders });
     }
 
     // Found an opponent — create the match!
@@ -104,7 +102,7 @@ serve(async (req: Request) => {
       .single();
 
     if (!match) {
-      return new Response(JSON.stringify({ error: "Failed to create match" }), { status: 500 });
+      return new Response(JSON.stringify({ error: "Failed to create match" }), { status: 500, headers: corsHeaders });
     }
 
     // Update both queue entries to "matched".
@@ -113,8 +111,8 @@ serve(async (req: Request) => {
       .update({ status: "matched", match_id: match.id })
       .in("id", [opponent.id, queueEntry?.id]);
 
-    // Deduct opponent's bet too.
-    await supabase.rpc("deduct_balance", { p_id: opponent.player_id, amount: bet_amount });
+    // Deduct opponent's bet too (skipped for testing).
+    // await supabase.rpc("deduct_balance", { p_id: opponent.player_id, amount: bet_amount });
 
     // Notify both players via Realtime.
     await supabase.channel(`queue:${opponent.player_id}`).send({
@@ -128,8 +126,8 @@ serve(async (req: Request) => {
       payload: { match_id: match.id, opponent_id: opponent.player_id, you_are: "player2", first_turn: coinFlip },
     });
 
-    return new Response(JSON.stringify({ status: "matched", match_id: match.id, first_turn: coinFlip }), { status: 200 });
+    return new Response(JSON.stringify({ status: "matched", match_id: match.id, first_turn: coinFlip }), { status: 200, headers: corsHeaders });
   } catch (err) {
-    return new Response(JSON.stringify({ error: String(err) }), { status: 500 });
+    return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: corsHeaders });
   }
 });

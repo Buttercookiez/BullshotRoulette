@@ -154,7 +154,11 @@ async function bootstrap(): Promise<void> {
   // The renderer owns in-world interaction: clicks on the gun/dealer/items/spin
   // are turned into player Actions here.
   const renderer = new Renderer3D({
-    onAction: (action) => controller.submitPlayerAction(action),
+    onAction: (action) => {
+      const mpHandler = (window as any).__mpSubmitAction;
+      if (mpHandler) mpHandler(action);
+      else controller.submitPlayerAction(action);
+    },
     onInteract,
     onBlink: () => audio.playFlick(),
     onHoverItem: (item) => {
@@ -364,14 +368,14 @@ async function bootstrap(): Promise<void> {
 
           // Start the multiplayer flow.
           const { startMultiplayerFlow } = await import("./multiplayer/flow");
-          startMultiplayerFlow({
+          const mp = startMultiplayerFlow({
             renderer,
             audio,
             caption,
-            playerId: crypto.randomUUID(), // TODO: replace with auth user ID
+            playerId: crypto.randomUUID(), // TODO: replace with wallet address
             betAmount: bet,
             onMatchStart: () => {
-              caption.enqueue("MATCH STARTED", "Your turn.");
+              caption.enqueue("MATCH STARTED", "Click the gun to aim.");
             },
             onMatchEnd: (youWon) => {
               caption.enqueue(
@@ -380,6 +384,9 @@ async function bootstrap(): Promise<void> {
               );
             },
           });
+
+          // Wire the renderer's clicks to the multiplayer client.
+          (window as any).__mpSubmitAction = (action: any) => mp.submitAction(action);
         });
       });
     }
