@@ -42,12 +42,24 @@ export class MultiplayerClient {
 
   /** Join the matchmaking queue with a bet amount. */
   async joinQueue(betAmount: number): Promise<void> {
-    // Subscribe to personal queue channel for match notifications.
+    // Subscribe to the queue table — when our row changes to "matched", we know.
     this.queueChannel = this.supabase
-      .channel(`queue:${this.playerId}`)
-      .on("broadcast", { event: "matched" }, ({ payload }) => {
-        this.handleMatched(payload);
-      })
+      .channel(`queue-watch-${this.playerId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "queue",
+          filter: `player_id=eq.${this.playerId}`,
+        },
+        (payload: any) => {
+          const row = payload.new;
+          if (row.status === "matched" && row.match_id) {
+            this.loadMatchAndStart(row.match_id);
+          }
+        },
+      )
       .subscribe();
 
     // Call the join-queue Edge Function.
@@ -59,11 +71,65 @@ export class MultiplayerClient {
 
     // If matched immediately (the function found an opponent).
     if (data?.status === "matched") {
-      this.handleMatched({
-        match_id: data.match_id,
-        you_are: "player2",
-        first_turn: data.first_turn,
-      });
+      this.loadMatchAndStart(data.match_id);
+    }
+    // Otherwise: "waiting" — the postgres_changes subscription will fire when matched.
+  }
+
+  /** Load match data from DB and trigger onMatched. */
+  private async loadMatchAndStart(matchId: string): Promise<void> {
+    this.matchId = matchId;
+
+    // Load the match to get first_turn info.
+    const { data: match } = await this.supabase
+      .from("matches")
+      .select("*")
+      .eq("id", matchId)
+      .single();
+
+    if (!match) return;
+
+    // Determine our role.
+    if (this.playerId === match.player1_id) this.youAre = "player1";
+    else this.youAre = "player2";
+
+    // Clean up queue channel.
+    if (this.queueChannel) {
+      this.supabase.removeChannel(this.queueChannel);
+      this.queueChannel = null;
+    }
+
+    // Subscribe to match updates for real-time game events.
+    this.channel = this.supabase
+      .channel(`match-watch-${matchId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "matches",
+          filter: `id=eq.${matchId}`,
+        },
+        (payload: any) => {
+          const row = payload.new;
+          this.handleGameEvents({
+            events: [], // Events come from the state diff
+            state: row.state,
+            turn_deadline: row.turn_deadline,
+          });
+        },
+      )
+      .subscribe();
+
+    this.config.onMatched({
+      matchId,
+      youAre: this.youAre,
+      firstTurn: match.first_turn,
+    });
+
+    // Initial state render.
+    if (match.state) {
+      this.config.onStateChange(match.state as GameState);
     }
   }
 
@@ -101,31 +167,6 @@ export class MultiplayerClient {
   }
 
   // --- Private ---
-
-  private handleMatched(payload: any): void {
-    this.matchId = payload.match_id;
-    this.youAre = payload.you_are;
-
-    // Clean up queue channel.
-    if (this.queueChannel) {
-      this.supabase.removeChannel(this.queueChannel);
-      this.queueChannel = null;
-    }
-
-    // Subscribe to the match channel for real-time game events.
-    this.channel = this.supabase
-      .channel(`match:${this.matchId}`)
-      .on("broadcast", { event: "game_events" }, ({ payload: eventPayload }) => {
-        this.handleGameEvents(eventPayload);
-      })
-      .subscribe();
-
-    this.config.onMatched({
-      matchId: this.matchId!,
-      youAre: this.youAre,
-      firstTurn: payload.first_turn,
-    });
-  }
 
   private handleGameEvents(payload: any): void {
     const { events, state, turn_deadline } = payload;
