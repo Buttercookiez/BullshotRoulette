@@ -1,12 +1,16 @@
 // Multiplayer game flow: search → match → coin flip → play.
+//
+// This module only orchestrates the match lifecycle. It does NOT render or play
+// audio itself — the `MultiplayerGameController` it creates is wired to the
+// EXACT same presentation pipeline as single-player via the `wire` callback, so
+// gameplay looks and feels identical. The only difference is a second real
+// player instead of the AI, each seeing their own point of view.
 
-import { MultiplayerClient } from "./client";
-import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config";
-import type { Action, GameEvent, GameState } from "../engine/types";
+import { MultiplayerGameController } from "./gameController";
+import type { Action } from "../engine/types";
 import type { Renderer3D } from "../render/renderer3d";
 import type { AudioSystem } from "../audio/audioSystem";
 import type { CaptionView } from "../app/caption";
-import { captionFor } from "../app/captions";
 
 export interface MultiplayerFlowDeps {
   renderer: Renderer3D;
@@ -14,18 +18,22 @@ export interface MultiplayerFlowDeps {
   caption: CaptionView;
   playerId: string;
   betAmount: number;
+  /** Attach the shared renderer/audio/caption presentation to the controller. */
+  wire: (controller: MultiplayerGameController) => void;
   onMatchStart: () => void;
   onMatchEnd: (youWon: boolean) => void;
 }
 
-export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () => void; submitAction: (a: Action) => void } {
-  const { renderer, audio, caption, playerId, betAmount, onMatchStart, onMatchEnd } = deps;
+export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
+  cancel: () => void;
+  submitAction: (a: Action) => void;
+} {
+  const { renderer, audio, caption, playerId, betAmount, wire, onMatchStart, onMatchEnd } = deps;
 
   let cancelled = false;
   let matchStarted = false;
-  let youAre: "player1" | "player2" = "player1";
 
-  // Turn timer display.
+  // Turn-timer readout (top-right), only visible in the final 10 seconds.
   const timerEl = document.createElement("div");
   timerEl.style.cssText =
     "position:fixed;top:20px;right:20px;font-family:'Courier New',monospace;" +
@@ -33,51 +41,21 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
     "z-index:9999;pointer-events:none;opacity:0;transition:opacity 0.3s;";
   document.body.appendChild(timerEl);
 
-  const client = new MultiplayerClient({
-    supabaseUrl: SUPABASE_URL,
-    supabaseAnonKey: SUPABASE_ANON_KEY,
+  const controller = new MultiplayerGameController({
     playerId,
 
-    onStateChange: (state: GameState) => {
+    onMatched: async ({ youAre, youFirst }) => {
       if (cancelled) return;
-      renderer.render(state);
-    },
 
-    onEvents: (events: GameEvent[]) => {
-      if (cancelled) return;
-      for (const event of events) {
-        renderer.playActionFeedback(event);
-        const cap = captionFor(event);
-        if (cap) caption.enqueue(cap.title, cap.desc);
-      }
-      audio.handleEvents(events);
-    },
-
-    onTimerTick: (secondsLeft: number) => {
-      if (cancelled || !matchStarted) return;
-      if (secondsLeft <= 10) {
-        timerEl.style.opacity = "1";
-        timerEl.textContent = String(secondsLeft);
-        timerEl.style.color = secondsLeft <= 5 ? "#ff0000" : "#cc3333";
-      } else {
-        timerEl.style.opacity = "0";
-      }
-    },
-
-    onMatched: async (data) => {
-      if (cancelled) return;
-      youAre = data.youAre;
-
-      // Tell the renderer which participant we control.
-      const myParticipant = youAre === "player1" ? "PLAYER" : "AI";
-      renderer.setLocalParticipant(myParticipant as "PLAYER" | "AI");
+      // Second player controls the "AI" seat: mirror camera + swap targets.
+      renderer.setLocalParticipant(youAre === "player1" ? "PLAYER" : "AI");
 
       caption.enqueue("OPPONENT FOUND", "The table awaits.");
-      await new Promise((r) => setTimeout(r, 2000));
+      await wait(2000);
       if (cancelled) return;
 
-      // Coin flip: the winner (first turn) sees it as heads.
-      const youFirst = data.firstTurn === data.youAre;
+      // Server-authoritative coin flip: `youFirst` is derived from the SAME
+      // `first_turn` value on both clients, so the outcome matches for both.
       await renderer.playCoinFlip(
         youFirst,
         () => audio.playCoinFlipShimmer(),
@@ -89,38 +67,55 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): { cancel: () =>
         youFirst ? "YOU GO FIRST" : "THEY GO FIRST",
         youFirst ? "The coin chose you." : "The coin chose them.",
       );
-      await new Promise((r) => setTimeout(r, 2500));
+      await wait(2500);
       if (cancelled) return;
 
+      // Reveal the board (emits initial state + ROUND_SET_LOADED events).
       matchStarted = true;
+      controller.beginMatch();
       onMatchStart();
     },
 
-    onMatchOver: (winnerId: string) => {
+    onMatchOver: (youWon) => {
       if (cancelled) return;
-      const youWon = winnerId === playerId;
       timerEl.style.opacity = "0";
       onMatchEnd(youWon);
     },
+
+    onTimerTick: (secondsLeft) => {
+      if (cancelled || !matchStarted) return;
+      if (secondsLeft <= 10) {
+        timerEl.style.opacity = "1";
+        timerEl.textContent = String(secondsLeft);
+        timerEl.style.color = secondsLeft <= 5 ? "#ff0000" : "#cc3333";
+      } else {
+        timerEl.style.opacity = "0";
+      }
+    },
   });
 
-  // Join the queue.
+  // Wire the shared presentation pipeline (identical to single-player).
+  wire(controller);
+
   caption.enqueue("SEARCHING", "Looking for an opponent...");
-  client.joinQueue(betAmount).catch((err) => {
+  controller.joinQueue(betAmount).catch((err) => {
     console.error("[multiplayer] queue error:", err);
-    caption.enqueue("ERROR", String(err));
+    caption.enqueue("CONNECTION LOST", "Could not reach matchmaking.");
   });
 
   return {
     cancel: () => {
       cancelled = true;
-      client.cancelQueue();
-      client.destroy();
+      controller.dispose();
       if (timerEl.parentNode) timerEl.parentNode.removeChild(timerEl);
     },
     submitAction: (action: Action) => {
       if (!matchStarted || cancelled) return;
-      client.submitAction(action);
+      controller.submitPlayerAction(action);
     },
   };
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }

@@ -67,3 +67,15 @@ CREATE POLICY "Queue update own" ON queue FOR UPDATE USING (auth.uid() = player_
 -- Matches: both players can read their match.
 CREATE POLICY "Match read participants" ON matches FOR SELECT
   USING (auth.uid() = player1_id OR auth.uid() = player2_id);
+
+-- ---------------------------------------------------------------------------
+-- Event replay support (added for authoritative multiplayer).
+--
+-- The server is the ONLY source of truth. Every applied action stores the
+-- resulting engine events in `last_events` and bumps `event_seq`. Both clients
+-- poll the match row; when they see a higher `event_seq` than they last
+-- consumed, they replay `last_events` locally (shots, captions, audio). This is
+-- what makes the OBSERVING player see the same shots/captions as the actor.
+-- ---------------------------------------------------------------------------
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS event_seq BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS last_events JSONB NOT NULL DEFAULT '[]';

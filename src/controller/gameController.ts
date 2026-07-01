@@ -41,6 +41,20 @@ export type StateObserver = (state: GameState) => void;
 /** Observer registered via `onEvents`; receives each batch of `GameEvent`s. */
 export type EventObserver = (events: readonly GameEvent[]) => void;
 
+/**
+ * The minimal controller surface the presentation layer (renderer + audio +
+ * captions in `main.ts`) depends on. Both the single-player {@link GameController}
+ * and the multiplayer controller implement it, so the exact same wiring drives
+ * both modes. In multiplayer the AI hooks (`pauseAi`/`resumeAi`) are no-ops.
+ */
+export interface PresentationController {
+  getState(): GameState;
+  onStateChange(cb: StateObserver): void;
+  onEvents(cb: EventObserver): void;
+  pauseAi(): void;
+  resumeAi(): void;
+}
+
 /** Opaque timer handle returned by the injected scheduler. */
 export type TimerHandle = ReturnType<typeof setTimeout>;
 

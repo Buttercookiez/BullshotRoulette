@@ -95,9 +95,14 @@ serve(async (req: Request) => {
       : new Date(Date.now() + TURN_TIMEOUT_SEC * 1000).toISOString();
 
     // Save to DB.
+    const nextSeq = (match.event_seq ?? 0) + 1;
     const updates: Record<string, unknown> = {
       state: newState,
       turn_deadline: newDeadline,
+      // Persist the events so the OTHER player's poller can replay them
+      // (shots, captions, audio) exactly as the acting player saw them.
+      event_seq: nextSeq,
+      last_events: result.events,
     };
     if (matchOver) {
       const winnerId = newState.winner === "PLAYER" ? match.player1_id : match.player2_id;
@@ -129,7 +134,7 @@ serve(async (req: Request) => {
       },
     });
 
-    return new Response(JSON.stringify({ ok: true, events: result.events, state: newState }), { status: 200, headers: corsHeaders });
+    return new Response(JSON.stringify({ ok: true, events: result.events, state: newState, event_seq: nextSeq }), { status: 200, headers: corsHeaders });
   } catch (err) {
     return new Response(JSON.stringify({ error: String(err) }), { status: 500, headers: corsHeaders });
   }

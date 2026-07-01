@@ -1,39 +1,63 @@
-// Multiplayer client adapter for Revolver Roulette.
+// Multiplayer client for Revolver Roulette.
 //
-// Replaces the local GameController in multiplayer mode. Instead of running the
-// engine locally, it sends actions to the Supabase Edge Function and receives
-// state/events via Supabase Realtime broadcasts.
+// The Supabase server is the ONLY source of truth. This client never runs the
+// engine locally. It:
+//   - joins the matchmaking queue and polls until an opponent is found,
+//   - submits actions to the `submit-action` Edge Function,
+//   - polls the authoritative `matches` row and, whenever the server's
+//     `event_seq` advances, REPLAYS the stored `last_events` locally so BOTH
+//     players (the actor and the observer) see identical shots/captions/audio.
+//
+// The acting player gets instant feedback from the function response; the
+// observing player gets the same events on the next poll tick. A per-client
+// `lastEventSeq` cursor guarantees each batch of events is played exactly once.
 
-import { createClient, type SupabaseClient, type RealtimeChannel } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Action, GameEvent, GameState } from "../engine/types";
 
 export interface MultiplayerConfig {
   supabaseUrl: string;
   supabaseAnonKey: string;
   playerId: string;
-  /** Called when the game state updates (for the renderer). */
+  /** Called once when matched. Includes the authoritative initial state/events. */
+  onMatched: (data: {
+    matchId: string;
+    youAre: "player1" | "player2";
+    firstTurn: "player1" | "player2";
+    initialState: GameState;
+    initialEvents: GameEvent[];
+  }) => void;
+  /** Called on every authoritative state update (for the renderer/panel). */
   onStateChange: (state: GameState) => void;
-  /** Called when game events arrive (for audio/captions/renderer feedback). */
+  /** Called with each new batch of engine events (for audio/captions/feedback). */
   onEvents: (events: GameEvent[]) => void;
-  /** Called when the turn timer ticks (seconds remaining). */
+  /** Called each second with the active turn's remaining time. */
   onTimerTick: (secondsLeft: number) => void;
-  /** Called when matched with an opponent. */
-  onMatched: (data: { matchId: string; youAre: "player1" | "player2"; firstTurn: string }) => void;
-  /** Called when the match ends. */
-  onMatchOver: (winnerId: string) => void;
+  /** Called once when the match finishes. `youWon` reflects THIS client. */
+  onMatchOver: (youWon: boolean) => void;
 }
+
+const QUEUE_POLL_MS = 2000;
+const MATCH_POLL_MS = 1200;
 
 export class MultiplayerClient {
   private supabase: SupabaseClient;
   private playerId: string;
   private matchId: string | null = null;
   private youAre: "player1" | "player2" = "player1";
-  private channel: RealtimeChannel | null = null;
-  private queueChannel: RealtimeChannel | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private player1Id = "";
+  private player2Id = "";
+
+  private queuePollTimer: ReturnType<typeof setInterval> | null = null;
   private matchPollTimer: ReturnType<typeof setInterval> | null = null;
   private timerInterval: ReturnType<typeof setInterval> | null = null;
   private turnDeadline: number | null = null;
+
+  /** Highest server event_seq this client has already replayed. */
+  private lastEventSeq = 0;
+  private matchOverFired = false;
+  private destroyed = false;
+
   private config: MultiplayerConfig;
 
   constructor(config: MultiplayerConfig) {
@@ -42,182 +66,169 @@ export class MultiplayerClient {
     this.supabase = createClient(config.supabaseUrl, config.supabaseAnonKey);
   }
 
-  /** Join the matchmaking queue with a bet amount. */
+  /** Join the matchmaking queue with a bet amount, then poll until matched. */
   async joinQueue(betAmount: number): Promise<void> {
-    // Call the join-queue Edge Function.
     const { data, error } = await this.supabase.functions.invoke("join-queue", {
       body: { player_id: this.playerId, bet_amount: betAmount },
     });
 
-    if (error) throw new Error(`Queue error: ${error.message}`);
+    if (error) throw new Error(`Could not reach matchmaking: ${error.message}`);
+    if (data?.error) throw new Error(String(data.error));
 
-    // If matched immediately (the function found an opponent).
-    if (data?.status === "matched") {
-      await this.loadMatchAndStart(data.match_id);
+    if (data?.status === "matched" && data.match_id) {
+      await this.loadMatch(data.match_id);
       return;
     }
 
-    // Not matched yet — poll every 2 seconds until our queue row OR a match appears.
-    const queueId = data?.queue_id;
-    this.pollTimer = setInterval(async () => {
-      // Check queue row first.
+    // Not matched yet — poll for our queue row flipping to "matched", or for a
+    // match that lists us as a participant.
+    const queueId = data?.queue_id as string | undefined;
+    this.queuePollTimer = setInterval(async () => {
+      if (this.destroyed) return;
+
       if (queueId) {
         const { data: row } = await this.supabase
           .from("queue")
           .select("status, match_id")
           .eq("id", queueId)
-          .single();
-        if (row && row.status === "matched" && row.match_id) {
-          if (this.pollTimer) clearInterval(this.pollTimer);
-          this.pollTimer = null;
-          await this.loadMatchAndStart(row.match_id);
+          .maybeSingle();
+        if (row?.status === "matched" && row.match_id) {
+          this.clearQueuePoll();
+          await this.loadMatch(row.match_id);
           return;
         }
       }
-      // Fallback: check matches table directly.
+
       const { data: match } = await this.supabase
         .from("matches")
         .select("id")
         .or(`player1_id.eq.${this.playerId},player2_id.eq.${this.playerId}`)
         .eq("status", "active")
         .limit(1)
-        .single();
-      if (match) {
-        if (this.pollTimer) clearInterval(this.pollTimer);
-        this.pollTimer = null;
-        await this.loadMatchAndStart(match.id);
+        .maybeSingle();
+      if (match?.id) {
+        this.clearQueuePoll();
+        await this.loadMatch(match.id);
       }
-    }, 2000);
+    }, QUEUE_POLL_MS);
   }
 
-  /** Load match data from DB and trigger onMatched. */
-  private async loadMatchAndStart(matchId: string): Promise<void> {
-    this.matchId = matchId;
-
-    // Load the match to get first_turn info.
-    const { data: match } = await this.supabase
-      .from("matches")
-      .select("*")
-      .eq("id", matchId)
-      .single();
-
-    if (!match) return;
-
-    // Determine our role.
-    if (this.playerId === match.player1_id) this.youAre = "player1";
-    else this.youAre = "player2";
-
-    // Clean up queue channel.
-    if (this.queueChannel) {
-      this.supabase.removeChannel(this.queueChannel);
-      this.queueChannel = null;
-    }
-
-    // Poll the match state every 1.5s for updates (reliable fallback).
-    let lastStateJson = JSON.stringify(match.state);
-    this.matchPollTimer = setInterval(async () => {
-      const { data: row } = await this.supabase
-        .from("matches")
-        .select("state, turn_deadline, status, winner_id")
-        .eq("id", matchId)
-        .single();
-      if (!row) return;
-      const newJson = JSON.stringify(row.state);
-      if (newJson !== lastStateJson) {
-        lastStateJson = newJson;
-        this.handleGameEvents({
-          events: [],
-          state: row.state,
-          turn_deadline: row.turn_deadline,
-        });
-        if (row.status === "finished") {
-          if (this.matchPollTimer) clearInterval(this.matchPollTimer);
-        }
-      }
-    }, 1500);
-
-    this.config.onMatched({
-      matchId,
-      youAre: this.youAre,
-      firstTurn: match.first_turn,
-    });
-
-    // Initial state render.
-    if (match.state) {
-      this.config.onStateChange(match.state as GameState);
-    }
-  }
-
-  /** Cancel matchmaking. */
-  async cancelQueue(): Promise<void> {
-    if (this.queueChannel) {
-      this.supabase.removeChannel(this.queueChannel);
-      this.queueChannel = null;
-    }
-    // TODO: Call cancel-queue Edge Function to refund bet.
-  }
-
-  /** Submit a player action during the match. */
+  /** Submit a player action. The actor gets immediate feedback from the server. */
   async submitAction(action: Action): Promise<void> {
-    if (!this.matchId) return;
+    if (!this.matchId || this.destroyed) return;
 
     const { data, error } = await this.supabase.functions.invoke("submit-action", {
-      body: {
-        match_id: this.matchId,
-        player_id: this.playerId,
-        action,
-      },
+      body: { match_id: this.matchId, player_id: this.playerId, action },
     });
 
     if (error) {
       console.warn("[multiplayer] action error:", error.message);
       return;
     }
+    if (data?.error) {
+      console.warn("[multiplayer] action rejected:", data.error, data.reason ?? "");
+      return;
+    }
 
-    // The acting player gets events back immediately from the response.
-    if (data?.events && data.events.length > 0) {
-      this.config.onEvents(data.events);
-    }
-    // Also update the state from the response for instant feedback.
-    if (data?.state) {
-      this.config.onStateChange(data.state as GameState);
-    }
+    // Instant feedback for the acting player. Advance the cursor so the poll
+    // does not replay these same events a second time.
+    const seq = data?.event_seq as number | undefined;
+    if (typeof seq === "number") this.lastEventSeq = Math.max(this.lastEventSeq, seq);
+
+    if (data?.state) this.applyServerRow(data.state as GameState, data.turn_deadline ?? null);
+    if (data?.events?.length) this.config.onEvents(data.events as GameEvent[]);
+
+    this.checkMatchOver(data?.state as GameState | undefined);
   }
 
-  /** Clean up channels and timers. */
+  /** Cancel matchmaking (best-effort). */
+  async cancelQueue(): Promise<void> {
+    this.clearQueuePoll();
+  }
+
+  /** Tear down all timers and channels. */
   destroy(): void {
-    if (this.channel) this.supabase.removeChannel(this.channel);
-    if (this.queueChannel) this.supabase.removeChannel(this.queueChannel);
-    if (this.timerInterval) clearInterval(this.timerInterval);
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.destroyed = true;
+    this.clearQueuePoll();
     if (this.matchPollTimer) clearInterval(this.matchPollTimer);
+    this.stopTimer();
   }
 
-  // --- Private ---
+  // --- internals ----------------------------------------------------------
 
-  private handleGameEvents(payload: any): void {
-    const { events, state, turn_deadline } = payload;
+  private async loadMatch(matchId: string): Promise<void> {
+    this.matchId = matchId;
 
-    // Update the turn timer.
-    if (turn_deadline) {
-      this.turnDeadline = new Date(turn_deadline).getTime();
+    const { data: match } = await this.supabase
+      .from("matches")
+      .select("*")
+      .eq("id", matchId)
+      .single();
+    if (!match) return;
+
+    this.player1Id = match.player1_id;
+    this.player2Id = match.player2_id;
+    this.youAre = this.playerId === match.player1_id ? "player1" : "player2";
+    this.lastEventSeq = match.event_seq ?? 1; // initial events replayed via onMatched
+
+    // Hand the authoritative initial state/events to the controller. The coin
+    // flip UI runs BEFORE the intro events are replayed (see the controller).
+    this.config.onMatched({
+      matchId,
+      youAre: this.youAre,
+      firstTurn: match.first_turn,
+      initialState: match.state as GameState,
+      initialEvents: (match.last_events ?? []) as GameEvent[],
+    });
+
+    this.startMatchPoll(matchId);
+  }
+
+  private startMatchPoll(matchId: string): void {
+    if (this.matchPollTimer) clearInterval(this.matchPollTimer);
+    this.matchPollTimer = setInterval(async () => {
+      if (this.destroyed) return;
+      const { data: row } = await this.supabase
+        .from("matches")
+        .select("state, turn_deadline, status, event_seq, last_events")
+        .eq("id", matchId)
+        .single();
+      if (!row) return;
+
+      const seq = (row.event_seq ?? 0) as number;
+      if (seq > this.lastEventSeq) {
+        this.lastEventSeq = seq;
+        // Replay the authoritative events FIRST (so captions/animations know the
+        // pre-shot state), then commit the new state.
+        this.applyServerRow(row.state as GameState, row.turn_deadline ?? null);
+        if (row.last_events?.length) this.config.onEvents(row.last_events as GameEvent[]);
+        this.checkMatchOver(row.state as GameState);
+      }
+
+      if (row.status === "finished" && this.matchPollTimer) {
+        clearInterval(this.matchPollTimer);
+        this.matchPollTimer = null;
+      }
+    }, MATCH_POLL_MS);
+  }
+
+  private applyServerRow(state: GameState, deadline: string | null): void {
+    this.config.onStateChange(state);
+    if (deadline && state.winner === null) {
+      this.turnDeadline = new Date(deadline).getTime();
       this.startTimer();
     } else {
+      this.turnDeadline = null;
       this.stopTimer();
     }
+  }
 
-    // Fire callbacks.
-    if (state) this.config.onStateChange(state as GameState);
-    if (events && events.length > 0) this.config.onEvents(events as GameEvent[]);
-
-    // Check for match over.
-    if (state?.winner !== null) {
-      const winnerId = state.winner === "PLAYER"
-        ? (this.youAre === "player1" ? this.playerId : "opponent")
-        : (this.youAre === "player2" ? this.playerId : "opponent");
-      this.config.onMatchOver(winnerId);
-      this.stopTimer();
-    }
+  private checkMatchOver(state?: GameState): void {
+    if (!state || state.winner === null || this.matchOverFired) return;
+    this.matchOverFired = true;
+    this.stopTimer();
+    const winnerId = state.winner === "PLAYER" ? this.player1Id : this.player2Id;
+    this.config.onMatchOver(winnerId === this.playerId);
   }
 
   private startTimer(): void {
@@ -226,10 +237,7 @@ export class MultiplayerClient {
       if (!this.turnDeadline) return;
       const left = Math.max(0, Math.ceil((this.turnDeadline - Date.now()) / 1000));
       this.config.onTimerTick(left);
-      if (left <= 0) {
-        this.stopTimer();
-        // Auto-shoot-self is handled server-side on the next action attempt.
-      }
+      if (left <= 0) this.stopTimer();
     }, 1000);
   }
 
@@ -237,6 +245,13 @@ export class MultiplayerClient {
     if (this.timerInterval) {
       clearInterval(this.timerInterval);
       this.timerInterval = null;
+    }
+  }
+
+  private clearQueuePoll(): void {
+    if (this.queuePollTimer) {
+      clearInterval(this.queuePollTimer);
+      this.queuePollTimer = null;
     }
   }
 }

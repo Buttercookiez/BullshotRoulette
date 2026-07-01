@@ -14,6 +14,7 @@
 // controller; this module never inspects or mutates state for rules purposes.
 
 import { GameController } from "./controller/gameController";
+import type { PresentationController } from "./controller/gameController";
 import { Renderer3D } from "./render/renderer3d";
 import { AudioSystem } from "./audio/audioSystem";
 import { DEFAULT_CONFIG } from "./engine/lifecycle";
@@ -230,7 +231,11 @@ async function bootstrap(): Promise<void> {
   
   let matchOverTimeout: any = null;
 
-  controller.onStateChange((state) => {
+  // The presentation pipeline, factored so BOTH the single-player controller
+  // and the multiplayer controller drive the renderer/audio/captions through
+  // the exact same code path (only the source of state/events differs).
+  const wire = (ctrl: PresentationController): void => {
+  ctrl.onStateChange((state) => {
     renderer.render(state);
     if (state.phase === "MATCH_OVER") {
       if (!matchOverTimeout) {
@@ -246,7 +251,7 @@ async function bootstrap(): Promise<void> {
       }
     }
   });
-  controller.onEvents((events) => {
+  ctrl.onEvents((events) => {
     let pushedCaption = false;
     let roundSetDelay = 0;
     let hasLiveFired = false;
@@ -265,7 +270,7 @@ async function bootstrap(): Promise<void> {
       const cap = captionFor(event);
       if (cap) {
         if (event.type === "ITEM_USED" && event.item === "MAGNIFYING_GLASS") {
-          const state = controller.getState();
+          const state = ctrl.getState();
           const revealed = state.participants[event.by].revealedCurrentChamber;
           if (revealed) {
             caption.enqueue("MAGNIFIER", `You see a ${revealed} shell in the chamber.`);
@@ -291,7 +296,7 @@ async function bootstrap(): Promise<void> {
       }
       
       if (pushedCaption || roundSetDelay > 0) {
-        controller.pauseAi();
+        ctrl.pauseAi();
         
         if (roundSetDelay > 0) {
           isCinematicPlaying = true;
@@ -302,7 +307,7 @@ async function bootstrap(): Promise<void> {
           setTimeout(() => {
             isCinematicPlaying = false;
             if (caption.isIdle) {
-              controller.resumeAi();
+              ctrl.resumeAi();
             }
           }, roundSetDelay);
         }
@@ -310,10 +315,13 @@ async function bootstrap(): Promise<void> {
 
     audio.handleEvents(events.filter(e => e.type !== "ROUND_SET_LOADED"));
 
-    const { cylinder } = controller.getState();
+    const { cylinder } = ctrl.getState();
     const counts = remainingCounts(cylinder);
     audio.setTension(counts.live + counts.blank, cylinder.size);
   });
+  };
+
+  wire(controller);
 
   // --- Renderer init (async; degrades gracefully) ----------------------
   // If the WebGL/canvas context cannot be created, show the "unavailable"
@@ -384,6 +392,7 @@ async function bootstrap(): Promise<void> {
             caption,
             playerId: getOrCreatePlayerId(),
             betAmount: bet,
+            wire, // reuse the single-player presentation pipeline
             onMatchStart: () => {
               caption.enqueue("MATCH STARTED", "Click the gun to aim.");
             },

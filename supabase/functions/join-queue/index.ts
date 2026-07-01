@@ -97,6 +97,10 @@ serve(async (req: Request) => {
         first_turn: coinFlip,
         turn_deadline: deadline,
         status: "active",
+        // Store the match-creation events (ROUND_SET_LOADED) as seq 1 so both
+        // clients replay the same "X LIVE / Y BLANK" intro after the coin flip.
+        event_seq: 1,
+        last_events: matchResult.events,
       })
       .select()
       .single();
