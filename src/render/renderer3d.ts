@@ -765,6 +765,13 @@ export class Renderer3D implements IRenderer {
       state.spinsUsedThisTurn < state.config.maxSpinsPerTurn;
     this.playerItems = vm.player.items;
     this.dealerItems = vm.dealer.items;
+    // Danger level (0..1): drives film grain, hand tremble, and the vignette.
+    const localVm = this.localParticipant === "PLAYER" ? vm.player : vm.dealer;
+    const hpFrac = localVm.hp.max > 0 ? localVm.hp.current / localVm.hp.max : 1;
+    this.tensionLevel = Math.min(1, Math.max(0, 1 - hpFrac));
+    if (typeof document !== "undefined") {
+      document.documentElement.style.setProperty("--rr-tension", this.tensionLevel.toFixed(2));
+    }
     if (this.matchOver) {
       this.aiming = false;
       this.firing = false;
@@ -1319,8 +1326,8 @@ export class Renderer3D implements IRenderer {
       {
         pos: new THREE.Vector3(1.2, 6.5, DEALER_Z - 1.5), // Over the dealer's shoulder
         look: new THREE.Vector3(0, 4.5, PLAYER_Z), // Looking across the table at the hooded player
-        holdMs: 2900,
-        lerp: 0.04, // slow, smooth push-in
+        holdMs: 2600,
+        lerp: 0.12, // fast whip onto the opponent
       },
     ]);
   }
@@ -2455,7 +2462,7 @@ export class Renderer3D implements IRenderer {
         
         let yPos = 18;
         if (p < 0.85) {
-           yPos = 18 - easeOutCubic(drop) * 12.5; // Stops at 5.5
+           yPos = 18 - drop * drop * 12.5; // Accelerating SLAM down to 5.5
         } else {
            yPos = 5.5 + easeOutCubic(rise) * 12.5; 
         }
@@ -2698,11 +2705,14 @@ export class Renderer3D implements IRenderer {
     // Shake on a live shot, added on top of the eased position.
     let sx = 0;
     let sy = 0;
+    let roll = 0;
     const shake = this.fxProgress("shake");
     if (shake !== null) {
       const m = (1 - shake) * 0.3;
       sx += (Math.random() - 0.5) * m;
       sy += (Math.random() - 0.5) * m;
+      // Handheld dutch-angle roll that decays with the shake.
+      roll = (1 - shake) * 0.045 * Math.sin(t * 42);
     }
     
     if (this.deathPlayerProg !== null) {
@@ -2732,6 +2742,8 @@ export class Renderer3D implements IRenderer {
 
     cam.position.set(finalX, finalY, finalZ);
     cam.lookAt(lookX, lookY, lookZ);
+    // The dutch roll rides on top of the look-at during a live-hit shake.
+    if (roll !== 0) cam.rotateZ(roll);
   }
 
   // -------------------------------------------------------------------------

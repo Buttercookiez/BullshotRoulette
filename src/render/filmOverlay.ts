@@ -24,13 +24,17 @@ const CSS = `
   position: absolute;
   inset: 0;
   background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  /* Red hurt flash + tension vignette, driven by the renderer via CSS vars. */
+  box-shadow: inset 0 0 calc(var(--rr-hurt, 0) * 240px) calc(var(--rr-hurt, 0) * 60px) rgba(130, 0, 0, 0.8);
+  transition: box-shadow 0.12s linear;
 }
 .${FILM_CLASS}::after {
   content: "";
   position: absolute;
   inset: -100%;
   background-image: url("${NOISE_URL}");
-  opacity: 0.07;
+  /* Grain intensifies as the danger rises (renderer sets --rr-tension). */
+  opacity: calc(0.05 + var(--rr-tension, 0) * 0.09);
   animation: rr-grain 0.45s steps(4) infinite;
 }
 @keyframes rr-grain {
