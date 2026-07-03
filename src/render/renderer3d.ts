@@ -368,7 +368,8 @@ export class Renderer3D implements IRenderer {
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.05;
+      // Darker filmic exposure — the blacks should crush, not glow.
+      renderer.toneMappingExposure = 0.92;
 
       if (!isCanvas) {
         (canvasOrContainer as HTMLElement).appendChild(renderer.domElement);
