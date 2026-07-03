@@ -322,23 +322,25 @@ export const SURFACE_Y = TABLE.topY + TABLE.thickness / 2;
 
 export function buildTable(): THREE.Group {
   const g = new THREE.Group();
-  const woodTop = matte(0x241810, 0.95);
-  const woodLeg = matte(PAL.tableWoodDark, 0.95);
+  // Industrial slab: scratched gunmetal top on welded steel legs.
+  const steelTop = metalMat(0x2c2f34, 0.6);
+  const steelLeg = metalMat(0x1e2126, 0.65);
 
-  // Aged, scratched wood + a bloodstained felt (procedural grunge textures).
-  const woodTex = makeGrungeTexture(0x241810, { scratches: 70, grime: 6000 });
-  if (woodTex) woodTop.map = woodTex;
+  // Worn, gouged metal (procedural grunge textures).
+  const topTex = makeGrungeTexture(0x2c2f34, { scratches: 130, grime: 9000 });
+  if (topTex) steelTop.map = topTex;
 
   const top = new THREE.Mesh(
     new THREE.BoxGeometry(TABLE.width, TABLE.thickness, TABLE.depth),
-    woodTop,
+    steelTop,
   );
   top.position.y = TABLE.topY;
   g.add(top);
 
-  // A dark, stained felt playing surface inset into the top.
-  const feltMat = matte(0x16221b, 0.98);
-  const feltTex = makeGrungeTexture(0x16221b, { blood: true, scratches: 30, grime: 5000 });
+  // A darker brushed-metal playing surface inset into the top — blood-stained
+  // and burned where past games ended badly.
+  const feltMat = metalMat(0x1c1e22, 0.75);
+  const feltTex = makeGrungeTexture(0x1c1e22, { blood: true, scratches: 90, grime: 8000 });
   if (feltTex) feltMat.map = feltTex;
   const felt = new THREE.Mesh(
     new THREE.BoxGeometry(TABLE.width * 0.82, 0.06, TABLE.depth * 0.74),
@@ -348,21 +350,21 @@ export function buildTable(): THREE.Group {
   felt.receiveShadow = true;
   g.add(felt);
 
-  // A thin brass trim framing the felt.
+  // A welded steel rim framing the inset surface (replaces the brass rail).
   const trim = new THREE.Mesh(
     new THREE.BoxGeometry(TABLE.width * 0.85, 0.04, TABLE.depth * 0.77),
-    metalMat(PAL.brass, 0.5),
+    metalMat(0x3d4148, 0.4),
   );
   trim.position.set(0, SURFACE_Y, 0);
   g.add(trim);
 
-  // Painted chalk markings on the felt (zone lines + a centre circle), like
-  // the reference table.
+  // Worn painted markings on the metal (zone lines + a centre circle) —
+  // faded industrial floor-paint white rather than chalk.
   const chalk = new THREE.MeshStandardMaterial({
-    color: 0xc7c1ad,
-    emissive: 0x2a2620,
-    emissiveIntensity: 0.35,
-    roughness: 0.85,
+    color: 0xb7b3a4,
+    emissive: 0x1f1e1a,
+    emissiveIntensity: 0.25,
+    roughness: 0.9,
   });
   const lineY = SURFACE_Y + 0.04;
   const feltW = TABLE.width * 0.8;
@@ -395,9 +397,17 @@ export function buildTable(): THREE.Group {
     [-1, 1],
     [1, 1],
   ] as const) {
-    const leg = new THREE.Mesh(legGeo, woodLeg);
+    const leg = new THREE.Mesh(legGeo, steelLeg);
     leg.position.set(sx * lx, TABLE.topY / 2, sz * lz);
     g.add(leg);
+  }
+
+  // Steel stretcher bars bracing the legs low to the ground.
+  const braceMat = metalMat(0x24272c, 0.6);
+  for (const bz2 of [lz, -lz] as const) {
+    const brace = new THREE.Mesh(new THREE.BoxGeometry(lx * 2, 0.18, 0.18), braceMat);
+    brace.position.set(0, 0.5, bz2);
+    g.add(brace);
   }
 
   // Iron bolt studs at the four corners of the top (like the reference table).
