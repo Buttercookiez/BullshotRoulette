@@ -445,6 +445,8 @@ export interface FigureHandles {
   arm: THREE.Group;
   /** Resting rotation of the arm (radians, X) so the renderer can return to it. */
   armRestX: number;
+  /** The OTHER (resting) arm — used for idle gestures like the neck scratch. */
+  restArm?: THREE.Group;
 }
 
 /** A creepy glowing crescent grin built from a partial torus arc. */
@@ -555,7 +557,7 @@ export function buildDealer(): FigureHandles {
   // The head sits fractionally off-plumb — wrong in a way you can't name.
   torso.rotation.z = 0.02;
   castReceive(group, true, false);
-  return { group, torso, eyeMat, mouthMat, arm, armRestX };
+  return { group, torso, eyeMat, mouthMat, arm, armRestX, restArm };
 }
 
 /** The Player: a hunched hooded figure, dimmer eyes and a faint grin. */
@@ -747,6 +749,8 @@ export interface RevolverHandles {
   /** Muzzle flash light + sprite. */
   flash: THREE.PointLight;
   flashMesh: THREE.Mesh;
+  /** Hammer spur — eases back while aiming, snaps forward on fire. */
+  hammer?: THREE.Mesh;
 }
 
 export function buildRevolver(): RevolverHandles {
@@ -858,7 +862,7 @@ export function buildRevolver(): RevolverHandles {
 
   castReceive(group, true, false);
   group.scale.setScalar(0.62);
-  return { group, drum, flash, flashMesh };
+  return { group, drum, flash, flashMesh, hammer };
 }
 
 // ---------------------------------------------------------------------------
@@ -1443,6 +1447,25 @@ export function buildBriefcase(): Briefcase {
   const baseBox = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 1.5), caseMat);
   baseBox.position.y = 0.3;
   group.add(baseBox);
+
+  // Brass latches on the front edge + a dark red felt interior well that
+  // shows when the lid swings open.
+  const latchMat = new THREE.MeshStandardMaterial({
+    color: 0xb08d3a,
+    metalness: 0.8,
+    roughness: 0.35,
+  });
+  for (const lxOff of [-0.45, 0.45] as const) {
+    const latch = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 0.06), latchMat);
+    latch.position.set(lxOff, 0.5, 0.76);
+    group.add(latch);
+  }
+  const feltWell = new THREE.Mesh(
+    new THREE.BoxGeometry(1.34, 0.06, 1.34),
+    new THREE.MeshStandardMaterial({ color: 0x4a0e0e, roughness: 0.95 }),
+  );
+  feltWell.position.y = 0.62;
+  group.add(feltWell);
   
   // Lid (Hinged at the back: z = -0.75)
   const lid = new THREE.Group();
@@ -1461,11 +1484,11 @@ export function buildBriefcase(): Briefcase {
 export function buildRoundBoard(): THREE.Group {
   const group = new THREE.Group();
   
-  // 1. The wooden board (base)
+  // 1. The rusted iron plate (base)
   const boardMat = new THREE.MeshStandardMaterial({ 
-    color: 0x3a2a1a,
-    roughness: 0.9, 
-    metalness: 0.1
+    color: 0x2a2d31,
+    roughness: 0.55, 
+    metalness: 0.7
   });
   const board = new THREE.Mesh(new THREE.BoxGeometry(5.0, 1.6, 0.3), boardMat);
   group.add(board);
@@ -1476,7 +1499,7 @@ export function buildRoundBoard(): THREE.Group {
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
   if (ctx) {
-    ctx.fillStyle = '#3a2a1a';
+    ctx.fillStyle = '#2a2d31';
     ctx.fillRect(0, 0, 1024, 256);
   }
   
@@ -1543,12 +1566,12 @@ export function updateRoundBoardText(group: THREE.Group, text: string, desc: str
   const ctx = textPlane.userData.ctx as CanvasRenderingContext2D;
   const texture = textPlane.userData.texture as THREE.CanvasTexture;
   
-  // Clear with transparent or wood color (we'll use wood color to blend with board)
-  ctx.fillStyle = '#3a2a1a';
+  // Clear with the iron colour so the text plane blends into the plate
+  ctx.fillStyle = '#2a2d31';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   
-  // Draw some wood grain lines for detail
-  ctx.fillStyle = '#2a1a0a';
+  // Brushed-metal streaks for detail
+  ctx.fillStyle = '#1a1d20';
   for (let i = 0; i < 20; i++) {
     ctx.fillRect(0, Math.random() * canvas.height, canvas.width, Math.random() * 5 + 1);
   }
