@@ -946,7 +946,9 @@ export class Renderer3D implements IRenderer {
   ): void {
     const shown = this.shownHp[side];
     if (shown < 0 || hp >= shown) {
-      // First render, or a heal: snap to the new value.
+      // First render, or a heal: snap to the new value. On a heal the newly
+      // lit candle flares back up (see the flicker loop in animate()).
+      if (shown >= 0 && hp > shown) this.startFx(`relight_${side}`, 900);
       this.shownHp[side] = hp;
       this.renderHpMarkers(markers, hp, max);
       return;
@@ -1116,17 +1118,21 @@ export class Renderer3D implements IRenderer {
         // blood on the victim, a flinch, a long candle-blowing gust — and a
         // camera that reveals the Dealer then cuts to the snuffed candle.
         this.startFx("muzzle", 320);
+        this.startFx("muzzleSmoke", 900);
+        this.startFx("casing", 1000);
         this.startFx("recoil", 420);
         this.startFx("shake", 700);
         this.startFx("eyeflare", 600);
         this.startFx(`hurt_${event.target}`, 700);
         this.startFx("windGust", 3200);
         this.triggerBlood(event.target);
+        if (event.target === this.localParticipant) this.startFx("hurtPulse", 900);
         this.cutToShot(event.target, true);
         break;
       }
       case "BLANK_FIRED":
         this.startFx("recoil", 300);
+        this.startFx("muzzleSmoke", 700);
         this.cutToShot(event.target, false);
         break;
       case "SHOT_STARTED":
@@ -1226,6 +1232,26 @@ export class Renderer3D implements IRenderer {
       mat.opacity = 1;
     }
     this.bloodStart = this.now();
+
+    // Splatter decals: dark pools left on the table edge and the floor
+    // beneath the victim, lingering long after the burst is gone.
+    const spawnAt = this.now();
+    let spawned = 0;
+    for (const d of this.decalPool) {
+      if (spawned >= 4) break;
+      if (this.bloodDecals.some((b) => b.mesh === d)) continue;
+      const onTable = spawned < 2;
+      d.position.set(
+        (Math.random() - 0.5) * 2.4,
+        onTable ? SURFACE_Y + 0.03 : 0.02,
+        onTable ? (target === "AI" ? -2.3 : 2.3) : z + (Math.random() - 0.5) * 1.8,
+      );
+      d.scale.setScalar(0.7 + Math.random() * 1.5);
+      (d.material as THREE.MeshStandardMaterial).opacity = 0;
+      d.visible = true;
+      this.bloodDecals.push({ mesh: d, start: spawnAt });
+      spawned++;
+    }
   }
 
   /** Flare a coloured ring where an item was used, themed to the item. */
@@ -1882,6 +1908,14 @@ export class Renderer3D implements IRenderer {
   private animate(elapsedMs: number): void {
     const t = elapsedMs / 1000;
 
+    // --- Red hurt flash + tension (CSS hooks consumed by the film overlay)
+    if (typeof document !== "undefined") {
+      const hurt = this.fxProgress("hurtPulse");
+      const deathRed = this.deathPlayerProg !== null ? Math.min(1, this.deathPlayerProg * 2) : 0;
+      const v = Math.max(hurt !== null ? 1 - hurt : 0, deathRed);
+      document.documentElement.style.setProperty("--rr-hurt", v.toFixed(2));
+    }
+
     // --- Swinging bulb: pendulum + steady waver + horror blink-outs ------
     if (this.bulb && this.bulbMesh) {
       const swingX = 0; // Math.sin(t * 0.7) * 0.6;
@@ -1917,6 +1951,22 @@ export class Renderer3D implements IRenderer {
       const shimmer = 2.2 + Math.sin(t * 3) * 0.4;
       this.dealer.eyeMat.emissiveIntensity = shimmer;
       this.dealer.mouthMat.emissiveIntensity = 1.6 + Math.sin(t * 3 + 0.6) * 0.3;
+      // Slow, wrong head-tracking: the torso turns a beat behind the room.
+      this.dealer.torso.rotation.y = Math.sin(t * 0.23) * 0.14;
+      // Idle tic: every so often the resting hand crawls up and scratches at
+      // the neck — quick, fidgety, insect-like — then drops back down.
+      if (this.dealer.restArm) {
+        const cycle = t % 13;
+        const inWindow = cycle > 8 && cycle < 10.6;
+        let raise = 0;
+        if (inWindow) {
+          const q = (cycle - 8) / 2.6;
+          raise = q < 0.2 ? q / 0.2 : q > 0.85 ? (1 - q) / 0.15 : 1;
+        }
+        const scratch = raise * Math.sin(t * 21) * 0.14;
+        this.dealer.restArm.rotation.x = -1.15 - raise * 1.35 + scratch;
+        this.dealer.restArm.rotation.z = -0.2 - raise * 0.5 + scratch * 0.5;
+      }
     }
     if (this.player) {
       const b = Math.sin(t * 1.3 + 1.1);
@@ -2036,10 +2086,90 @@ export class Renderer3D implements IRenderer {
         this.revolver.flashMesh.visible = false;
         this.revolver.flash.intensity = 0;
       }
+
+      // Hammer: eases back while aiming, snaps forward on the muzzle flash.
+      if (this.revolver.hammer) {
+        const cock = Math.max(a, this.dealerAimT);
+        const snap = muzzle !== null ? 1 - muzzle : 0;
+        this.revolver.hammer.position.x = 0.42 + cock * 0.1 - snap * 0.12;
+        this.revolver.hammer.rotation.y = cock * 0.5 - snap * 0.6;
+      }
+      // Smoke puff drifting up from the muzzle after a shot.
+      if (this.muzzleSmoke) {
+        const sp = this.fxProgress("muzzleSmoke");
+        if (sp !== null) {
+          this.muzzleSmoke.visible = true;
+          this.muzzleSmoke.scale.setScalar(0.5 + sp * 2.6);
+          this.muzzleSmoke.position.y = 0.18 + sp * 0.9;
+          (this.muzzleSmoke.material as THREE.MeshBasicMaterial).opacity = 0.32 * (1 - sp);
+        } else {
+          this.muzzleSmoke.visible = false;
+        }
+      }
+      // Ejected casing: a small brass hop off the gun on a live shot.
+      if (this.casing) {
+        const cp = this.fxProgress("casing");
+        if (cp !== null) {
+          this.casing.visible = true;
+          this.casing.position.set(
+            g.position.x + cp * 1.6,
+            g.position.y + Math.sin(cp * Math.PI) * 1.1 - cp * Math.max(0, g.position.y - SURFACE_Y - 0.1),
+            g.position.z + cp * 0.4,
+          );
+          this.casing.rotation.set(cp * 9, cp * 5, cp * 7);
+        } else {
+          this.casing.visible = false;
+        }
+      }
     }
 
     // --- Blood particles: analytic ballistic flight + fade ---------------
     this.updateBlood();
+
+    // --- Blood decals: soak in, linger, then slowly fade -----------------
+    if (this.bloodDecals.length > 0) {
+      const nowMs = this.now();
+      this.bloodDecals = this.bloodDecals.filter((b) => {
+        const age = (nowMs - b.start) / 1000;
+        const mat = b.mesh.material as THREE.MeshStandardMaterial;
+        if (age < 2) mat.opacity = Math.min(0.85, age * 0.6);
+        else if (age > 20) mat.opacity = Math.max(0, 0.85 * (1 - (age - 20) / 8));
+        if (age > 28) {
+          b.mesh.visible = false;
+          return false;
+        }
+        return true;
+      });
+    }
+
+    // --- Candle smoke: grey wisps curling up from a snuffed flame --------
+    if (this.candleSmoke.length > 0) {
+      const nowMs = this.now();
+      this.candleSmoke = this.candleSmoke.filter((s) => {
+        const age = (nowMs - s.start) / 1000;
+        if (age < 0) {
+          s.mesh.visible = false;
+          return true;
+        }
+        if (age > 2.6) {
+          s.mesh.visible = false;
+          s.mesh.parent?.remove(s.mesh);
+          disposeTree(s.mesh);
+          return false;
+        }
+        s.mesh.visible = true;
+        const k = age / 2.6;
+        s.mesh.position.set(
+          s.x + Math.sin(age * 3 + s.drift) * 0.08,
+          s.y0 + k * 1.4,
+          s.z + Math.cos(age * 2.2 + s.drift) * 0.06,
+        );
+        s.mesh.scale.setScalar(0.06 + k * 0.22);
+        (s.mesh.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - k);
+        return true;
+      });
+    }
+
     this.updateShellReveal(t);
 
     // --- Item-use burst: expanding glowing ring that fades ---------------
@@ -2066,13 +2196,23 @@ export class Renderer3D implements IRenderer {
     const blowMarker = this.candleBlow
       ? this.candleBlow.markers[this.candleBlow.index]
       : undefined;
+    const relightP = this.fxProgress("relight_player");
+    const relightD = this.fxProgress("relight_dealer");
     for (const m of [...this.playerHp, ...this.dealerHp]) {
       if (m === blowMarker) continue; // handled by the blow-out below
       if (m.flame.visible) {
+        // On a heal, the candles flare back up with a hungry over-glow.
+        const re = this.playerHp.includes(m) ? relightP : relightD;
+        const flare = re !== null ? Math.sin(re * Math.PI) * 1.6 : 0;
         const lean = gust * 1.1;
         m.flame.rotation.z = lean;
-        m.flame.scale.set(1 + Math.abs(lean) * 0.5, flick * (1 - Math.abs(lean) * 0.35), 1);
-        m.light.intensity = 0.45 * flick * (1 - Math.abs(gust) * 0.6);
+        m.flame.scale.set(
+          1 + Math.abs(lean) * 0.5 + flare * 0.2,
+          flick * (1 - Math.abs(lean) * 0.35) + flare * 0.4,
+          1,
+        );
+        m.light.intensity = 0.45 * flick * (1 - Math.abs(gust) * 0.6) + flare * 0.5;
+        m.glowMat.emissiveIntensity = 2.6 + flare * 2.0;
       }
     }
 
@@ -2099,13 +2239,19 @@ export class Renderer3D implements IRenderer {
               cb.soundPlayed = true;
               this.onCandleBlow();
             }
-            // Hard blow: the flame whips sideways, stretches and shrinks out.
+            // Gutter: the flame whips sideways, briefly fights back to life,
+            // then dies — while the wax visibly slumps.
             m.flame.visible = true;
-            m.flame.rotation.z = Math.sin(p * Math.PI) * 1.9;
-            m.flame.scale.set(1 + p * 0.6, Math.max(0.04, 1 - p), 1);
-            m.glowMat.emissiveIntensity = 2.6 * (1 - p);
-            m.light.intensity = 0.5 * (1 - p);
+            const fight =
+              p > 0.45 && p < 0.6 ? Math.sin(((p - 0.45) / 0.15) * Math.PI) * 0.5 : 0;
+            m.flame.rotation.z = Math.sin(p * Math.PI) * 1.9 * (1 - fight * 0.5);
+            m.flame.scale.set(1 + p * 0.6, Math.max(0.04, 1 - p + fight * 0.35), 1);
+            m.glowMat.emissiveIntensity = Math.max(0, 2.6 * (1 - p) + fight * 1.4);
+            m.light.intensity = Math.max(0, 0.5 * (1 - p) + fight * 0.3);
+            m.wax.scale.y = 1 - p * 0.6;
+            m.wax.position.y = 0.3 - p * 0.14;
           } else {
+            this.spawnCandleSmoke(m);
             this.shownHp[cb.side] = cb.target;
             this.renderHpMarkers(cb.markers, cb.target, cb.max);
             this.candleBlow = null;
@@ -2334,16 +2480,20 @@ export class Renderer3D implements IRenderer {
     
     if (this.dealer) {
       if (deathAiProg !== null) {
-        // Dealer dies: simple fall backwards, turn black (emissive off)
+        // Dealer dies: slumps FORWARD onto the table with a settle bounce,
+        // the eyes guttering out one stuttering flicker at a time.
         const p = deathAiProg;
-        const ease = 1 - Math.pow(1 - p, 3);
-        this.dealer.group.rotation.x = ease * -1.5; // fall back
-        this.dealer.group.rotation.z = 0;
-        this.dealer.group.position.y = 0; // do not sink
+        const ease = 1 - Math.pow(1 - Math.min(1, p * 2.2), 3);
+        const settle =
+          p > 0.45 ? Math.sin((p - 0.45) * 26) * Math.exp(-(p - 0.45) * 9) * 0.06 : 0;
+        this.dealer.group.rotation.x = ease * 0.95 + settle;
+        this.dealer.group.rotation.z = ease * 0.08;
+        this.dealer.group.position.y = -ease * 0.5;
         
-        // "dead body only see black"
-        this.dealer.eyeMat.emissiveIntensity = 0;
-        this.dealer.mouthMat.emissiveIntensity = 0;
+        const gutter = Math.max(0, 1 - p * 2.4);
+        const stutter = Math.random() < 0.7 ? 1 : 0.15;
+        this.dealer.eyeMat.emissiveIntensity = 2.2 * gutter * stutter;
+        this.dealer.mouthMat.emissiveIntensity = 1.6 * gutter * stutter;
         
         // Pour blood a lot
         if (p < 0.1 && this.bloodStart < 0) {
@@ -2360,6 +2510,23 @@ export class Renderer3D implements IRenderer {
     if (this.deathPlayerProg !== null && this.deathPlayerProg < 0.1 && this.bloodStart < 0) {
        this.bloodDurMs = 4000;
        this.triggerBlood("PLAYER");
+    }
+
+    // --- First-person hands: tremble with tension; go limp on death ------
+    if (this.handsGroup) {
+      if (this.deathPlayerProg !== null) {
+        const p = this.deathPlayerProg;
+        const ease = 1 - Math.pow(1 - Math.min(1, p * 2), 3);
+        this.handsGroup.position.y = -ease * 2.4;
+        this.handsGroup.position.z = ease * 1.6;
+        this.handsGroup.rotation.x = ease * 0.5;
+      } else {
+        const amp = 0.012 + this.tensionLevel * 0.05;
+        this.handsGroup.position.y = Math.sin(t * 13) * amp + Math.sin(t * 31) * amp * 0.5;
+        this.handsGroup.position.x = Math.sin(t * 17 + 1) * amp * 0.6;
+        this.handsGroup.position.z = 0;
+        this.handsGroup.rotation.x = 0;
+      }
     }
 
     this.updateCamera(t);
@@ -2397,6 +2564,36 @@ export class Renderer3D implements IRenderer {
       const mat = p.mesh.material as THREE.MeshStandardMaterial;
       mat.opacity = fade;
       p.mesh.scale.setScalar(0.6 + fade * 0.6);
+    }
+  }
+
+  /** Spawn a short-lived plume of smoke wisps above a freshly snuffed candle. */
+  private spawnCandleSmoke(m: HpMarker): void {
+    if (!this.scene) return;
+    const world = new THREE.Vector3();
+    m.group.getWorldPosition(world);
+    const now = this.now();
+    for (let i = 0; i < 3; i++) {
+      const wisp = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 6, 6),
+        new THREE.MeshBasicMaterial({
+          color: 0x9a9a94,
+          transparent: true,
+          opacity: 0.5,
+          depthWrite: false,
+        }),
+      );
+      wisp.scale.setScalar(0.06);
+      wisp.visible = false;
+      this.scene.add(wisp);
+      this.candleSmoke.push({
+        mesh: wisp,
+        start: now + i * 180,
+        x: world.x,
+        y0: world.y + 0.6,
+        z: world.z,
+        drift: Math.random() * Math.PI * 2,
+      });
     }
   }
 
