@@ -755,9 +755,11 @@ export function buildRevolver(): RevolverHandles {
   // profile is drawn in the X-Z plane (length along Z, "up of the gun" along
   // +X) and is thin along Y, so it rests flat on the felt with no clipping.
   const group = new THREE.Group();
-  const silver = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.95, roughness: 0.2 });
-  const silverHi = new THREE.MeshStandardMaterial({ color: 0xdddddd, metalness: 0.9, roughness: 0.15 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0x5a3a22, metalness: 0.05, roughness: 0.6 });
+  // Worn blued steel: a near-black body whose edges catch the light where
+  // decades of handling have rubbed the bluing away.
+  const silver = new THREE.MeshStandardMaterial({ color: 0x2e3138, metalness: 0.9, roughness: 0.35 });
+  const silverHi = new THREE.MeshStandardMaterial({ color: 0x4c515c, metalness: 0.85, roughness: 0.25 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x352016, metalness: 0.05, roughness: 0.75 });
   const brass = metalMat(PAL.brass, 0.4);
 
   const T = 0.36; // thickness in Y (how thick the gun is as it lies on its side)
@@ -879,18 +881,28 @@ export function buildHpMarker(): HpMarker {
   const group = new THREE.Group();
   const waxMat = matte(PAL.bone, 0.6);
 
-  // A small brass dish the candle stands in.
+  // A small tarnished dish the candle stands in.
   const dish = new THREE.Mesh(
     new THREE.CylinderGeometry(0.2, 0.22, 0.06, 16),
-    metalMat(PAL.brass, 0.45),
+    metalMat(0x4a3f28, 0.7),
   );
   dish.position.y = 0.03;
   group.add(dish);
 
-  // Wax column.
+  // Wax column, with melted drips crawling down its sides.
   const wax = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.5, 12), waxMat);
   wax.position.y = 0.3;
   group.add(wax);
+  for (const [dy, dr, da] of [
+    [0.42, 0.03, 0.4],
+    [0.3, 0.025, 2.2],
+    [0.18, 0.035, 4.4],
+  ] as const) {
+    const drip = new THREE.Mesh(new THREE.SphereGeometry(dr, 6, 6), waxMat);
+    drip.scale.set(1, 1.8, 1);
+    drip.position.set(Math.cos(da) * 0.12, dy, Math.sin(da) * 0.12);
+    group.add(drip);
+  }
 
   // Wick.
   const wick = new THREE.Mesh(
@@ -1249,7 +1261,14 @@ export function buildShell(live: boolean): THREE.Group {
     nose.position.y = 0.46;
     g.add(nose);
   } else {
-    // An empty case with a dark hollow mouth (the BLANK round).
+    // A blank: dull blue-grey lacquered casing with a dark hollow mouth, so
+    // the silhouette reads instantly against the warm brass of a live round.
+    const lacquer = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.135, 0.135, 0.4, 16),
+      matte(0x3d4a55, 0.85),
+    );
+    lacquer.position.y = 0.25;
+    g.add(lacquer);
     const mouth = new THREE.Mesh(
       new THREE.CylinderGeometry(0.11, 0.12, 0.08, 16),
       matte(0x14140f, 0.7),
@@ -1280,16 +1299,16 @@ export interface MiniLamp {
 
 export function buildMiniLamp(): MiniLamp {
   const group = new THREE.Group();
-  // Weathered teal metal, like the reference sprite.
+  // Rusted industrial iron — the teal paint flaked off years ago.
   const metal = new THREE.MeshStandardMaterial({
-    color: 0x33595a,
-    roughness: 0.45,
-    metalness: 0.7,
+    color: 0x3a3128,
+    roughness: 0.6,
+    metalness: 0.65,
   });
   const dark = new THREE.MeshStandardMaterial({
-    color: 0x1c3334,
-    roughness: 0.5,
-    metalness: 0.7,
+    color: 0x241f19,
+    roughness: 0.65,
+    metalness: 0.65,
   });
 
   const POST_H = 6.4;
@@ -1336,14 +1355,14 @@ export function buildMiniLamp(): MiniLamp {
   headCone.position.set(headX, headY - 0.2, 0);
   group.add(headCone);
 
-  // Glowing lens underneath the head.
-  const glowMat = glow(0xffd27a, 3.0);
+  // Glowing lens underneath the head — a dying sodium amber.
+  const glowMat = glow(0xe8cf8f, 2.3);
   const flame = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.16, 16), glowMat);
   flame.position.set(headX, headY - 0.5, 0);
   group.add(flame);
 
-  // Warm light hanging at the head.
-  const light = new THREE.PointLight(0xffc070, 14, 22, 2);
+  // A weaker, sicklier hanging light.
+  const light = new THREE.PointLight(0xdfc08a, 10, 20, 2);
   light.position.set(headX, headY - 0.6, 0);
   light.castShadow = true;
   light.shadow.mapSize.set(1024, 1024);
