@@ -405,22 +405,25 @@ export class Renderer3D implements IRenderer {
   private buildScene(): void {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PAL.void);
-    scene.fog = new THREE.FogExp2(PAL.fog, 0.028);
+    scene.fog = new THREE.FogExp2(PAL.fog, 0.038);
 
     const camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 100);
     camera.position.copy(this.camPos);
     camera.lookAt(this.camLook);
 
-    // --- Lighting: dim ambient + swinging bulb + a warm camera-side fill --
-    scene.add(new THREE.AmbientLight(0x3a3034, 1.15));
+    // --- Lighting: near-black ambient + ONE harsh cold bulb + faint fills --
+    // Buckshot-style: a single sickly fluorescent source owns the room; every
+    // other light is barely-there so the shadows stay deep and directional.
+    scene.add(new THREE.AmbientLight(0x232a28, 0.65));
 
-    // A soft warm fill from the camera so the figures' fronts read (no shadow
-    // so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xffd9b0, 0.55);
+    // A faint cold fill from the camera so the figures' fronts still read
+    // (no shadow so it never fights the bulb's cast shadows).
+    const fill = new THREE.DirectionalLight(0xaebcb4, 0.28);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    const bulb = new THREE.PointLight(0xffb060, 40, 34, 2);
+    // The harsh overhead bulb: cold green-white fluorescent, deep shadows.
+    const bulb = new THREE.PointLight(0xd9ead2, 46, 30, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
@@ -431,12 +434,28 @@ export class Renderer3D implements IRenderer {
     const bulbMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.18, 10, 10),
       new THREE.MeshStandardMaterial({
-        color: 0xffd9a0,
-        emissive: 0xffb060,
+        color: 0xeaf2e2,
+        emissive: 0xd9ead2,
         emissiveIntensity: 3,
       }),
     );
     bulbMesh.position.copy(bulb.position);
+    // An industrial wire cage around the bulb — children of the bulb mesh so
+    // the cage sways and flickers with it.
+    const cageMat = new THREE.MeshStandardMaterial({
+      color: 0x17191b,
+      roughness: 0.5,
+      metalness: 0.8,
+    });
+    for (const ry of [0, Math.PI / 3, -Math.PI / 3]) {
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.015, 6, 18), cageMat);
+      ring.rotation.y = ry;
+      bulbMesh.add(ring);
+    }
+    const cageBottom = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.015, 6, 18), cageMat);
+    cageBottom.rotation.x = Math.PI / 2;
+    cageBottom.position.y = -0.24;
+    bulbMesh.add(cageBottom);
     scene.add(bulbMesh);
     this.bulbMesh = bulbMesh;
     // The cord.
@@ -448,7 +467,7 @@ export class Renderer3D implements IRenderer {
     scene.add(cord);
 
     // A faint cold rim from behind the dealer for separation.
-    const rim = new THREE.DirectionalLight(0x33405a, 0.45);
+    const rim = new THREE.DirectionalLight(0x2e4a44, 0.5);
     rim.position.set(-4, 8, -12);
     scene.add(rim);
 
