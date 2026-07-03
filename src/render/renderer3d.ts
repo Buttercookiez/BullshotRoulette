@@ -203,6 +203,19 @@ export class Renderer3D implements IRenderer {
   private dealerSlots: ItemSlot[] = [];
   private shellGroup: THREE.Group | undefined;
   private blood: BloodBurst | undefined;
+  private bloodDecals: Array<{ mesh: THREE.Mesh; start: number }> = [];
+  private decalPool: THREE.Mesh[] = [];
+  private candleSmoke: Array<{
+    mesh: THREE.Mesh;
+    start: number;
+    x: number;
+    y0: number;
+    z: number;
+    drift: number;
+  }> = [];
+  private muzzleSmoke: THREE.Mesh | undefined;
+  private casing: THREE.Mesh | undefined;
+  private tensionLevel = 0;
   private playerBox: Briefcase | undefined;
   private dealerBox: Briefcase | undefined;
   private roundBoard: THREE.Group | undefined;
@@ -519,6 +532,23 @@ export class Renderer3D implements IRenderer {
     revolver.group.position.y = this.gunBaseY;
     scene.add(revolver.group);
     this.revolver = revolver;
+
+    // Muzzle smoke puff + ejected brass casing (hidden until a shot).
+    const muzzleSmoke = new THREE.Mesh(
+      new THREE.SphereGeometry(0.3, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0x8a8a86, transparent: true, opacity: 0, depthWrite: false }),
+    );
+    muzzleSmoke.visible = false;
+    muzzleSmoke.position.set(0.3, 0.18, -3.4);
+    revolver.group.add(muzzleSmoke);
+    this.muzzleSmoke = muzzleSmoke;
+    const casing = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.06, 0.22, 10),
+      new THREE.MeshStandardMaterial({ color: 0xc09a3e, metalness: 0.8, roughness: 0.35 }),
+    );
+    casing.visible = false;
+    scene.add(casing);
+    this.casing = casing;
     // Clicking the gun toggles aim mode (then click the Dealer or the SELF
     // marker to fire).
     this.interactives.push({
@@ -582,9 +612,29 @@ export class Renderer3D implements IRenderer {
     this.shellGroup = shells;
 
     // --- Blood burst emitter (repositioned to the victim on a live hit) --
-    const blood = buildBloodBurst(28);
+    const blood = buildBloodBurst(60);
     scene.add(blood.group);
     this.blood = blood;
+
+    // --- Persistent blood decals: dark pools that linger, then fade ------
+    this.decalPool = [];
+    this.bloodDecals = [];
+    for (let i = 0; i < 12; i++) {
+      const d = new THREE.Mesh(
+        new THREE.CircleGeometry(0.3, 14),
+        new THREE.MeshStandardMaterial({
+          color: 0x3a0605,
+          roughness: 0.35,
+          metalness: 0.1,
+          transparent: true,
+          opacity: 0,
+        }),
+      );
+      d.rotation.x = -Math.PI / 2;
+      d.visible = false;
+      scene.add(d);
+      this.decalPool.push(d);
+    }
 
     // --- Item-use burst: a glowing ring that flares when an item is used --
     const burst = new THREE.Mesh(
@@ -2600,6 +2650,14 @@ function makeTargetMarker(color: number): THREE.Group {
   const ring = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.07, 10, 28), mat);
   ring.rotation.x = Math.PI / 2;
   g.add(ring);
+  // Iron-sight ticks: four hard studs around the ring.
+  for (let i = 0; i < 4; i++) {
+    const a2 = (i / 4) * Math.PI * 2;
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.22), mat);
+    tick.position.set(Math.cos(a2) * 0.45, 0, Math.sin(a2) * 0.45);
+    tick.rotation.y = -a2;
+    g.add(tick);
+  }
   const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.4, 4), mat);
   arrow.position.y = -0.5;
   arrow.rotation.y = Math.PI / 4;
