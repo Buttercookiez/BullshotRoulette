@@ -464,8 +464,8 @@ export function buildDealer(): FigureHandles {
   const group = new THREE.Group();
   const torso = new THREE.Group();
 
-  const suit = matte(0x0c0c0e, 0.85); // near-black suit
-  const flesh = matte(0xc8c0b8, 0.6); // corpse-pale skin
+  const suit = matte(0x08080a, 0.9); // pit-black suit
+  const flesh = matte(0xd8d4c8, 0.55); // drained, bloodless skin
 
   // Tall, thin body — unnervingly narrow
   const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 4.2, 10), suit);
@@ -495,7 +495,7 @@ export function buildDealer(): FigureHandles {
 
   // Hollow dark eye sockets
   const socketMat = matte(0x050505, 0.9);
-  const eyeMat = glow(0xffffff, 0.2);
+  const eyeMat = glow(0xd8ffe4, 0.4);
   const socketGeo = new THREE.BoxGeometry(0.4, 0.3, 0.2);
   const skL = new THREE.Mesh(socketGeo, socketMat);
   skL.position.set(-0.35, 6.7, 0.9);
@@ -513,34 +513,36 @@ export function buildDealer(): FigureHandles {
   eyeR.position.set(0.35, 6.7, 0.98);
   torso.add(eyeL, eyeR);
 
-  // Wide unsettling grin
-  const mouthMat = glow(0x050505, 0.1);
+  // Wide unsettling grin — a dim ember of dried blood behind the teeth
+  const mouthMat = glow(0x2a0806, 0.2);
   const grinMesh = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.25, 0.2), mouthMat);
   grinMesh.position.set(0, 6.1, 0.95);
   torso.add(grinMesh);
 
-  // Blocky teeth
-  const toothMat = matte(0xdadada, 0.9);
+  // Crooked, uneven teeth — stained bone, each one slightly wrong.
+  const toothMat = matte(0xcfc8b4, 0.9);
   for (let i = 0; i < 7; i++) {
     const tx = -0.4 + (i / 6) * 0.8;
-    const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.05), toothMat);
-    tooth.position.set(tx, 6.1, 1.02);
+    const jag = i % 3 === 0 ? 0.05 : i % 2 === 0 ? -0.03 : 0.01;
+    const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22 + jag, 0.05), toothMat);
+    tooth.position.set(tx, 6.1 - jag * 0.5, 1.02);
+    tooth.rotation.z = i % 2 === 0 ? 0.07 : -0.05;
     torso.add(tooth);
   }
 
-  // Cold underlight
-  const faceLight = new THREE.PointLight(0xaaccff, 1.5, 3.0, 2);
-  faceLight.position.set(0, 5.5, 1.5);
+  // Sickly cold underlight, thrown up from below the chin
+  const faceLight = new THREE.PointLight(0xbfe8c8, 1.9, 3.4, 2);
+  faceLight.position.set(0, 5.9, 1.3);
   torso.add(faceLight);
 
-  // Thin arms
-  const restArm = buildArm(suit, flesh);
+  // Arms — too long for the body, hanging heavy.
+  const restArm = buildArm(suit, flesh, 1.2);
   restArm.position.set(0.7, 4.8, 0.4);
   restArm.rotation.x = -1.15;
   restArm.rotation.z = -0.2;
   torso.add(restArm);
 
-  const arm = buildArm(suit, flesh);
+  const arm = buildArm(suit, flesh, 1.2);
   arm.position.set(-0.7, 4.8, 0.4);
   const armRestX = -1.15;
   arm.rotation.x = armRestX;
@@ -548,6 +550,10 @@ export function buildDealer(): FigureHandles {
   torso.add(arm);
 
   group.add(torso);
+  // Unnaturally tall and thin: stretched vertically, pinched inward.
+  group.scale.set(0.94, 1.18, 0.96);
+  // The head sits fractionally off-plumb — wrong in a way you can't name.
+  torso.rotation.z = 0.02;
   castReceive(group, true, false);
   return { group, torso, eyeMat, mouthMat, arm, armRestX };
 }
@@ -640,35 +646,63 @@ export function buildPlayer(): FigureHandles {
  */
 export function buildPlayerHands(): THREE.Group {
   const group = new THREE.Group();
-  const flesh = matte(0x9a9590, 0.7); // Pale dead flesh
-  const sleeve = matte(0x111111, 0.9); // Dark grey/black sleeves
-  
-  const buildHand = (isLeft: boolean) => {
+  const flesh = matte(0xa8a29a, 0.75); // pale, bloodless flesh
+  const fleshDark = matte(0x8a847c, 0.8); // knuckle shading
+  const sleeve = matte(0x101012, 0.92); // ragged black sleeves
+  const cuffMat = matte(0x1c1c20, 0.85);
+
+  const buildHand = (isLeft: boolean): THREE.Group => {
     const handGroup = new THREE.Group();
-    // Sleeve
-    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.4, 1.8, 12), sleeve);
+
+    // Forearm sleeve, with a rolled cuff at the wrist.
+    const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.4, 1.8, 12), sleeve);
     arm.rotation.x = Math.PI / 2;
     arm.position.set(0, 0.2, 0.9);
     handGroup.add(arm);
-    
-    // Hand
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.2, 0.7), flesh);
-    hand.position.set(0, 0, -0.2);
+    const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.33, 0.16, 12), cuffMat);
+    cuff.rotation.x = Math.PI / 2;
+    cuff.position.set(0, 0.2, 0.12);
+    handGroup.add(cuff);
+
+    // Palm: slightly domed, bony.
+    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.18, 0.62), flesh);
+    hand.position.set(0, 0.02, -0.2);
     handGroup.add(hand);
-    
-    // Fingers
-    for(let i=0; i<4; i++) {
-      const finger = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 8), flesh);
-      finger.rotation.x = Math.PI / 2;
-      finger.position.set(-0.2 + i * 0.13, -0.05, -0.6);
-      handGroup.add(finger);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), flesh);
+    dome.scale.set(1.15, 0.45, 1.2);
+    dome.position.set(0, 0.1, -0.18);
+    handGroup.add(dome);
+
+    // Four segmented fingers with knuckle bumps, splayed and tense.
+    for (let i = 0; i < 4; i++) {
+      const fx = -0.2 + i * 0.13;
+      const splay = (i - 1.5) * 0.06;
+      const proximal = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.26, 8), flesh);
+      proximal.rotation.x = Math.PI / 2 - 0.12;
+      proximal.rotation.z = splay * 0.4;
+      proximal.position.set(fx, -0.02, -0.55);
+      handGroup.add(proximal);
+      const distal = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.22, 8), flesh);
+      distal.rotation.x = Math.PI / 2 - 0.3;
+      distal.position.set(fx + splay * 0.3, -0.08, -0.76);
+      handGroup.add(distal);
+      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), fleshDark);
+      knuckle.position.set(fx, 0.04, -0.44);
+      handGroup.add(knuckle);
     }
-    
+
+    // Thumb, tucked along the inner edge.
+    const thumbSide = isLeft ? 1 : -1;
+    const thumb = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.3, 8), flesh);
+    thumb.rotation.set(Math.PI / 2 - 0.2, 0, thumbSide * 0.9);
+    thumb.position.set(thumbSide * 0.32, 0, -0.32);
+    handGroup.add(thumb);
+
     handGroup.position.set(isLeft ? -2.5 : 2.5, 3.4, 6.5);
     handGroup.rotation.y = isLeft ? 0.2 : -0.2;
     return handGroup;
-  }
-  
+  };
+
   group.add(buildHand(true));
   group.add(buildHand(false));
   castReceive(group, true, true);
