@@ -177,18 +177,54 @@ function makeGrungeTexture(
 }
 
 // ---------------------------------------------------------------------------
-// Room: floor + back walls, all very dark (fog swallows the edges)
+// Room: an industrial back-room — stained concrete, corrugated panels, exposed
+// pipes, a barred vent leaking cold light, wet floor patches. The fog still
+// swallows the edges; the room should read as oppressive, not decorated.
 // ---------------------------------------------------------------------------
 
 export function buildRoom(): THREE.Group {
   const g = new THREE.Group();
 
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), matte(PAL.floor));
+  // Wet concrete floor: dark, stained, with a faint sheen so the bulb reads.
+  const floorMat = matte(PAL.floor, 0.6, 0.08);
+  const floorTex = makeGrungeTexture(PAL.floor, { blood: true, scratches: 60, grime: 9000 });
+  if (floorTex) {
+    floorTex.repeat.set(4, 4);
+    floorMat.map = floorTex;
+  }
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.receiveShadow = true;
   g.add(floor);
 
-  const wallMat = matte(PAL.wall);
+  // Standing water: low-roughness puddles that catch the overhead light.
+  const puddleMat = new THREE.MeshStandardMaterial({
+    color: 0x0c0d10,
+    roughness: 0.15,
+    metalness: 0.4,
+    transparent: true,
+    opacity: 0.85,
+  });
+  for (const [px, pz, pr] of [
+    [-6, 4, 2.2],
+    [7, -3, 3.0],
+    [-3, -8, 1.6],
+    [4, 9, 2.6],
+  ] as const) {
+    const puddle = new THREE.Mesh(new THREE.CircleGeometry(pr, 20), puddleMat);
+    puddle.rotation.x = -Math.PI / 2;
+    puddle.position.set(px, 0.01, pz);
+    puddle.receiveShadow = true;
+    g.add(puddle);
+  }
+
+  // Stained concrete walls.
+  const wallMat = matte(PAL.wall, 0.98);
+  const wallTex = makeGrungeTexture(PAL.wall, { scratches: 30, grime: 8000 });
+  if (wallTex) {
+    wallTex.repeat.set(3, 2);
+    wallMat.map = wallTex;
+  }
   const back = new THREE.Mesh(new THREE.PlaneGeometry(60, 30), wallMat);
   back.position.set(0, 15, -16);
   back.receiveShadow = true;
@@ -205,6 +241,67 @@ export function buildRoom(): THREE.Group {
   right.rotation.y = -Math.PI / 2;
   right.receiveShadow = true;
   g.add(right);
+
+  // Corrugated metal panels lining the lower back wall (alternating shades).
+  const panelA = metalMat(0x23262a, 0.7);
+  const panelB = metalMat(0x1c1f23, 0.75);
+  for (let i = -4; i <= 4; i++) {
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(2.6, 6, 0.12),
+      i % 2 === 0 ? panelA : panelB,
+    );
+    panel.position.set(i * 2.8, 3, -15.8);
+    panel.receiveShadow = true;
+    g.add(panel);
+  }
+
+  // Exposed pipes running high along the back wall, with vertical feeds.
+  const pipeMat = metalMat(0x2e3236, 0.6);
+  const rustMat = metalMat(0x4a3326, 0.8);
+  const backPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 44, 10), pipeMat);
+  backPipe.rotation.z = Math.PI / 2;
+  backPipe.position.set(0, 9.5, -15.6);
+  g.add(backPipe);
+  const backPipe2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 44, 10), rustMat);
+  backPipe2.rotation.z = Math.PI / 2;
+  backPipe2.position.set(0, 8.8, -15.55);
+  g.add(backPipe2);
+  for (const vx of [-9, 5.5, 12] as const) {
+    const feed = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 19, 10), pipeMat);
+    feed.position.set(vx, 9.5, -15.6);
+    g.add(feed);
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.3, 10), rustMat);
+    collar.position.set(vx, 9.5, -15.6);
+    g.add(collar);
+  }
+
+  // A barred wall vent leaking sickly light, with cheap volumetric shafts.
+  const ventFrame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 0.2), metalMat(0x1a1d20, 0.6));
+  ventFrame.position.set(8, 12, -15.85);
+  g.add(ventFrame);
+  const ventGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.8), glow(0x9fb7a4, 0.5));
+  ventGlow.position.set(8, 12, -15.74);
+  g.add(ventGlow);
+  const barMat = metalMat(0x0e1012, 0.5);
+  for (let i = 0; i < 5; i++) {
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.0, 0.08), barMat);
+    bar.position.set(8 - 1.2 + i * 0.6, 12, -15.7);
+    g.add(bar);
+  }
+  const shaftMat = new THREE.MeshBasicMaterial({
+    color: 0xaec7b2,
+    transparent: true,
+    opacity: 0.05,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  for (let i = 0; i < 3; i++) {
+    const shaft = new THREE.Mesh(new THREE.PlaneGeometry(2.4 - i * 0.5, 10), shaftMat);
+    shaft.position.set(8 - i * 0.3, 7.5, -14.6 + i * 0.5);
+    shaft.rotation.x = 0.35;
+    g.add(shaft);
+  }
 
   return g;
 }
