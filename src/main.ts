@@ -24,10 +24,14 @@ import { ActionPanel } from "./app/controls";
 import { CaptionView } from "./app/caption";
 import { captionFor, itemCaption } from "./app/captions";
 import { initSettings, initItemCards } from "./app/landing";
+import { installFilmOverlay } from "./render/filmOverlay";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 
 gsap.registerPlugin(ScrollTrigger);
+
+// Analog-horror post layer (film grain + vignette + scanlines) over the canvas.
+installFilmOverlay();
 
 /**
  * Resolve the randomness source. By default play is non-deterministic
