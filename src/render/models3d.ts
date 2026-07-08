@@ -388,9 +388,9 @@ export function buildRoom(): THREE.Group {
   const mattressMat = matte(0x121412, 0.95); // dark, gross mattress
   
   const legGeo = new THREE.CylinderGeometry(0.15, 0.15, 2, 8);
-  for (const [x, z] of [[-4, -2], [4, -2], [-4, 2], [4, 2]]) {
+  for (const pos of [[-4, -2], [4, -2], [-4, 2], [4, 2]]) {
     const leg = new THREE.Mesh(legGeo, cotMat);
-    leg.position.set(x, 1, z);
+    leg.position.set(pos[0] as number, 1, pos[1] as number);
     cotGroup.add(leg);
   }
   const frameMesh = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.2, 4.4), cotMat);
