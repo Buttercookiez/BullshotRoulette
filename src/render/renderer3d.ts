@@ -2635,6 +2635,33 @@ export class Renderer3D implements IRenderer {
         
         this.roundBoard.position.set(0 - localTop.x, yPos + 10.8 - localTop.y, 0 - localTop.z);
         this.roundBoard.rotation.copy(euler);
+
+        // --- Flexible chains: a damped wave travels along each chain so the
+        // links bend and whip instead of hanging as one rigid stick. Both
+        // ends stay pinned (board below, anchor above) via a sin(pi*f)
+        // envelope that is zero at the ends and max in the middle.
+        const chains = this.roundBoard.children.filter(
+          (c): c is THREE.Group => (c as THREE.Group).isGroup === true,
+        );
+        chains.forEach((chain, ci) => {
+          const n = chain.children.length;
+          if (n === 0) return;
+          chain.children.forEach((link, i) => {
+            const f = i / (n - 1); // 0 = board end, 1 = anchor end
+            const env = Math.sin(Math.PI * f); // pinned at both ends
+            // Big whip while the board drops; gentle idle ripple after.
+            const whip =
+              Math.sin(t * 7.5 - i * 0.45 + ci * 1.7) * 0.22 * dropEnergy;
+            const idle =
+              Math.sin(t * 2.1 - i * 0.18 + ci * 0.9) * 0.035;
+            link.position.x = (whip + idle) * env;
+            link.position.z =
+              (Math.cos(t * 6.3 - i * 0.4 + ci * 2.3) * 0.16 * dropEnergy +
+                Math.cos(t * 1.6 - i * 0.14 + ci) * 0.025) * env;
+            // Slight per-link tilt so the metal reads as articulating.
+            link.rotation.z = (whip + idle) * env * 0.6;
+          });
+        });
       }
     }
 

@@ -23,6 +23,8 @@ interface ActionPayload {
   match_id: string;
   player_id: string;
   action: { kind: string; target?: string; item?: string };
+  /** Set ONLY by the server-side AFK proxy — marks a forced timeout self-shot. */
+  is_afk_auto?: boolean;
 }
 
 serve(async (req: Request) => {
@@ -32,7 +34,7 @@ serve(async (req: Request) => {
   }
 
   try {
-    const { match_id, player_id, action } = (await req.json()) as ActionPayload;
+    const { match_id, player_id, action, is_afk_auto } = (await req.json()) as ActionPayload;
 
     // Create a service-role client (bypasses RLS for server-side writes).
     const supabase = createClient(
@@ -67,7 +69,10 @@ serve(async (req: Request) => {
     // call ourselves recursively as the active player to trigger the auto-shoot.
     const activeParticipant: string = match.state?.activeParticipant ?? "PLAYER";
     const activeSlot = activeParticipant === "PLAYER" ? "player1" : "player2";
-    if (activeSlot !== playerSlot && match.turn_deadline && new Date(match.turn_deadline) < new Date()) {
+    // Guard: never proxy-fire while the coin flip hasn't resolved yet — the
+    // deadline set at match creation is stale during the accept + flip phase.
+    const coinResolved = match.coin_pick_by != null;
+    if (coinResolved && activeSlot !== playerSlot && match.turn_deadline && new Date(match.turn_deadline) < new Date()) {
       // The active player is AFK. Fire a proxy request so the auto-shoot logic runs.
       const activePlayerId = activeSlot === "player1" ? match.player1_id : match.player2_id;
       const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -83,6 +88,7 @@ serve(async (req: Request) => {
             match_id,
             player_id: activePlayerId,
             action: { kind: "SHOOT", target: activeParticipant },
+            is_afk_auto: true,
           }),
         });
       } catch {
@@ -103,18 +109,13 @@ serve(async (req: Request) => {
       console.warn(`[submit-action] ${participantId} tried to act but active is ${state.activeParticipant}`);
     }
 
-    // Check turn timeout — if deadline has passed, auto-shoot-self.
-    const now = new Date();
-    // 1.5s grace buffer: a player who submits up to 1.5s after the deadline
-    // still has their action honoured (network latency forgiveness).
-    const GRACE_MS = 1500;
-    const timedOut = match.turn_deadline &&
-      new Date(match.turn_deadline).getTime() + GRACE_MS < now.getTime();
-    if (timedOut) {
-      // Time's up — force a self-shot as punishment.
-      action.kind = "SHOOT";
-      action.target = participantId;
-    }
+    // TIMEOUT POLICY: a real player's action is NEVER rewritten into a
+    // self-shot — that caused legitimate first shots (fired after the coin
+    // flip while the stale match-creation deadline had already expired) to
+    // hit the shooter instead of the enemy. Forced timeout self-shots come
+    // ONLY from the server-side AFK proxy above, which explicitly sends a
+    // self-shot with is_afk_auto=true.
+    const timedOut = is_afk_auto === true;
 
     // --- AFK forfeit: if a player times out 3 turns in a row, opponent wins ---
     // Track per-player AFK strikes in the match row (afk_strikes_p1 / afk_strikes_p2).

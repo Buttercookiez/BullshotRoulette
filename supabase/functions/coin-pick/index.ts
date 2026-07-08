@@ -72,9 +72,15 @@ serve(async (req: Request) => {
         activeParticipant: firstTurn === "player1" ? "PLAYER" : "AI",
       };
       
+      // Reset the turn clock: the original deadline was set at match CREATION
+      // and has long expired after the accept screen + coin flip. Without this
+      // reset, submit-action would punish the FIRST real shot as a timeout
+      // self-shot (the shooter takes their own bullet). 45s covers the flip
+      // animation plus the first 30s turn.
+      const freshDeadline = new Date(Date.now() + 45_000).toISOString();
       await supabase
         .from("matches")
-        .update({ first_turn: firstTurn, state: newState })
+        .update({ first_turn: firstTurn, state: newState, turn_deadline: freshDeadline })
         .eq("id", match_id);
     } else {
       // Someone already picked — reload to read their claim.
