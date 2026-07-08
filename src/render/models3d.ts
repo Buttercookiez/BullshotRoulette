@@ -86,7 +86,7 @@ function hex(n: number): string {
  */
 function makeGrungeTexture(
   base: number,
-  opts: { blood?: boolean; scratches?: number; grime?: number } = {},
+  opts: { blood?: boolean; scratches?: number; grime?: number; cinderblock?: boolean; tallyMarks?: boolean } = {},
 ): THREE.Texture | null {
   if (typeof document === "undefined") return null;
   try {
@@ -166,6 +166,51 @@ function makeGrungeTexture(
       }
     }
 
+    // Cinderblock mortar lines
+    if (opts.cinderblock) {
+      ctx.strokeStyle = "rgba(0,0,0,0.5)";
+      ctx.lineWidth = 4;
+      // Draw horizontal lines
+      for (let y = 0; y < N; y += 64) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(N, y);
+        ctx.stroke();
+      }
+      // Draw vertical offset lines
+      for (let y = 0; y < N; y += 64) {
+        const offset = (y / 64) % 2 === 0 ? 0 : 64;
+        for (let x = offset; x < N; x += 128) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x, y + 64);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Tally marks (5 groups)
+    if (opts.tallyMarks) {
+      ctx.strokeStyle = "rgba(10,10,10,0.8)";
+      ctx.lineWidth = 2;
+      for (let g = 0; g < 6; g++) {
+        const gx = 50 + Math.random() * (N - 100);
+        const gy = 50 + Math.random() * (N - 100);
+        // Draw 4 vertical lines
+        for (let i = 0; i < 4; i++) {
+          ctx.beginPath();
+          ctx.moveTo(gx + i * 8 + (Math.random() - 0.5) * 3, gy + (Math.random() - 0.5) * 5);
+          ctx.lineTo(gx + i * 8 + (Math.random() - 0.5) * 3, gy + 30 + (Math.random() - 0.5) * 5);
+          ctx.stroke();
+        }
+        // Draw the 5th strike-through line
+        ctx.beginPath();
+        ctx.moveTo(gx - 5, gy + 5 + Math.random() * 5);
+        ctx.lineTo(gx + 35, gy + 25 + Math.random() * 5);
+        ctx.stroke();
+      }
+    }
+
     const tex = new THREE.CanvasTexture(c);
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
@@ -220,7 +265,7 @@ export function buildRoom(): THREE.Group {
 
   // Stained concrete walls.
   const wallMat = matte(PAL.wall, 0.98);
-  const wallTex = makeGrungeTexture(PAL.wall, { scratches: 30, grime: 8000 });
+  const wallTex = makeGrungeTexture(PAL.wall, { scratches: 30, grime: 8000, cinderblock: true, tallyMarks: true });
   if (wallTex) {
     wallTex.repeat.set(3, 2);
     wallMat.map = wallTex;
@@ -302,6 +347,141 @@ export function buildRoom(): THREE.Group {
     shaft.rotation.x = 0.35;
     g.add(shaft);
   }
+
+  // === PRISON ELEMENTS ===
+
+  // 1. Heavy Iron Cell Door on the left wall
+  const doorGroup = new THREE.Group();
+  doorGroup.position.set(-21.9, 0, -2);
+  doorGroup.rotation.y = Math.PI / 2;
+  
+  const doorFrameMat = metalMat(0x141416, 0.6);
+  const frameL = new THREE.Mesh(new THREE.BoxGeometry(0.4, 14, 0.4), doorFrameMat);
+  frameL.position.set(-3.6, 7, 0);
+  const frameR = new THREE.Mesh(new THREE.BoxGeometry(0.4, 14, 0.4), doorFrameMat);
+  frameR.position.set(3.6, 7, 0);
+  const frameT = new THREE.Mesh(new THREE.BoxGeometry(7.6, 0.4, 0.4), doorFrameMat);
+  frameT.position.set(0, 14, 0);
+  doorGroup.add(frameL, frameR, frameT);
+
+  // Bars for the door
+  for (let i = 0; i < 9; i++) {
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 14, 8), barMat);
+    bar.position.set(-3.2 + i * 0.8, 7, 0);
+    doorGroup.add(bar);
+  }
+  // Crossbars
+  for (let i = 0; i < 3; i++) {
+    const cross = new THREE.Mesh(new THREE.BoxGeometry(7.2, 0.25, 0.3), doorFrameMat);
+    cross.position.set(0, 3 + i * 4, 0);
+    doorGroup.add(cross);
+  }
+  castReceive(doorGroup, true, true);
+  g.add(doorGroup);
+
+  // 2. Rusted metal cot in the back right corner
+  const cotGroup = new THREE.Group();
+  cotGroup.position.set(15, 0, -11);
+  cotGroup.rotation.y = -0.15;
+  
+  const cotMat = metalMat(0x2a201c, 0.8);
+  const mattressMat = matte(0x121412, 0.95); // dark, gross mattress
+  
+  const legGeo = new THREE.CylinderGeometry(0.15, 0.15, 2, 8);
+  for (const [x, z] of [[-4, -2], [4, -2], [-4, 2], [4, 2]]) {
+    const leg = new THREE.Mesh(legGeo, cotMat);
+    leg.position.set(x, 1, z);
+    cotGroup.add(leg);
+  }
+  const frameMesh = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.2, 4.4), cotMat);
+  frameMesh.position.set(0, 2, 0);
+  cotGroup.add(frameMesh);
+  
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(8, 0.6, 4), mattressMat);
+  mattress.position.set(0, 2.4, 0);
+  cotGroup.add(mattress);
+  castReceive(cotGroup, true, true);
+  g.add(cotGroup);
+
+  // 3. Wall chains hanging from the back wall
+  const chainMat = metalMat(0x151515, 0.5);
+  const ringGeo = new THREE.TorusGeometry(0.3, 0.06, 8, 16);
+  const linkGeo = new THREE.TorusGeometry(0.12, 0.04, 8, 12);
+  
+  for (const xPos of [-14, -6, 2, 12]) {
+    const wallRing = new THREE.Mesh(ringGeo, chainMat);
+    wallRing.position.set(xPos, 8, -15.8);
+    wallRing.rotation.x = Math.PI / 2;
+    g.add(wallRing);
+    
+    // Hang a few links
+    const numLinks = 4 + Math.floor(Math.random() * 8);
+    for(let i=0; i<numLinks; i++) {
+      const link = new THREE.Mesh(linkGeo, chainMat);
+      link.position.set(xPos, 7.8 - i * 0.18, -15.7 + (Math.random()*0.02));
+      link.rotation.y = i % 2 === 0 ? 0 : Math.PI / 2;
+      link.rotation.x = Math.PI / 2;
+      link.rotation.z = (Math.random() - 0.5) * 0.3;
+      g.add(link);
+    }
+  }
+
+  // 4. Industrial Toilet / Sink combo
+  const toiletGroup = new THREE.Group();
+  toiletGroup.position.set(-18, 0, -12);
+  toiletGroup.rotation.y = Math.PI / 2;
+  
+  const steelRustMat = metalMat(0x3a3a40, 0.45); // dull, rusted stainless steel
+  const porcelainMat = matte(0x80807a, 0.8); // gross discolored porcelain
+
+  // Sink base / stand
+  const toiletBase = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4, 2), steelRustMat);
+  toiletBase.position.y = 2;
+  toiletGroup.add(toiletBase);
+
+  // Toilet bowl
+  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.6, 1.2, 12), porcelainMat);
+  bowl.position.set(0, 1.2, 1.4);
+  toiletGroup.add(bowl);
+  
+  // Sink basin on top
+  const basin = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.4, 12), steelRustMat);
+  basin.position.set(0, 4.2, 0.4);
+  toiletGroup.add(basin);
+
+  // Faucet
+  const faucet = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.6, 8), steelRustMat);
+  faucet.position.set(0, 4.5, -0.2);
+  faucet.rotation.x = 0.4;
+  toiletGroup.add(faucet);
+
+  castReceive(toiletGroup, true, true);
+  g.add(toiletGroup);
+
+  // 5. Floor Drain
+  const drainGroup = new THREE.Group();
+  drainGroup.position.set(0, 0.02, -8);
+  
+  const drainMat = metalMat(0x1a1a1c, 0.8);
+  const drainBase = new THREE.Mesh(new THREE.CircleGeometry(0.8, 16), drainMat);
+  drainBase.rotation.x = -Math.PI / 2;
+  drainGroup.add(drainBase);
+  
+  // Dark fluid puddle
+  const drainPuddleMat = new THREE.MeshStandardMaterial({
+    color: 0x2a0808, // dark blood
+    roughness: 0.1,
+    metalness: 0.3,
+    transparent: true,
+    opacity: 0.85
+  });
+  const drainPuddle = new THREE.Mesh(new THREE.CircleGeometry(1.6, 16), drainPuddleMat);
+  drainPuddle.rotation.x = -Math.PI / 2;
+  drainPuddle.position.y = 0.01;
+  drainGroup.add(drainPuddle);
+
+  castReceive(drainGroup, true, true);
+  g.add(drainGroup);
 
   return g;
 }

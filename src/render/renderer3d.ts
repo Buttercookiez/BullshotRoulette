@@ -195,6 +195,7 @@ export class Renderer3D implements IRenderer {
   private revolver: RevolverHandles | undefined;
   private bulb: THREE.PointLight | undefined;
   private bulbMesh: THREE.Mesh | undefined;
+  private hallwayLight: THREE.SpotLight | undefined;
   private miniLamp: MiniLamp | undefined;
   private graveflies: Graveflies | undefined;
   private playerHp: HpMarker[] = [];
@@ -381,8 +382,7 @@ export class Renderer3D implements IRenderer {
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      // Darker filmic exposure — the blacks should crush, not glow.
-      renderer.toneMappingExposure = 0.92;
+      renderer.toneMappingExposure = 1.05;
 
       if (!isCanvas) {
         (canvasOrContainer as HTMLElement).appendChild(renderer.domElement);
@@ -425,19 +425,16 @@ export class Renderer3D implements IRenderer {
     camera.position.copy(this.camPos);
     camera.lookAt(this.camLook);
 
-    // --- Lighting: near-black ambient + ONE harsh cold bulb + faint fills --
-    // Buckshot-style: a single sickly fluorescent source owns the room; every
-    // other light is barely-there so the shadows stay deep and directional.
-    scene.add(new THREE.AmbientLight(0x232a28, 0.65));
+    // --- Lighting: dim ambient + swinging bulb + a warm camera-side fill --
+    scene.add(new THREE.AmbientLight(0x3a3034, 1.15));
 
-    // A faint cold fill from the camera so the figures' fronts still read
-    // (no shadow so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xaebcb4, 0.28);
+    // A soft warm fill from the camera so the figures' fronts read (no shadow
+    // so it never fights the bulb's cast shadows).
+    const fill = new THREE.DirectionalLight(0xffd9b0, 0.55);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    // The harsh overhead bulb: cold green-white fluorescent, deep shadows.
-    const bulb = new THREE.PointLight(0xd9ead2, 46, 30, 2);
+    const bulb = new THREE.PointLight(0xffb060, 40, 34, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
@@ -446,30 +443,27 @@ export class Renderer3D implements IRenderer {
     this.bulb = bulb;
 
     const bulbMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 10, 10),
+      new THREE.SphereGeometry(0.25, 16, 16),
       new THREE.MeshStandardMaterial({
-        color: 0xeaf2e2,
-        emissive: 0xd9ead2,
+        color: 0xffd9a0,
+        emissive: 0xffb060,
         emissiveIntensity: 3,
       }),
     );
+    const bulbBase = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.12, 0.12, 0.3, 8),
+      new THREE.MeshStandardMaterial({ color: 0x333333 })
+    );
+    bulbBase.position.y = 0.3;
+    bulbMesh.add(bulbBase);
+    const shade = new THREE.Mesh(
+      new THREE.ConeGeometry(1.4, 0.9, 16, 1, true),
+      new THREE.MeshStandardMaterial({ color: 0x1a1a1c, side: THREE.DoubleSide })
+    );
+    shade.position.y = 0.45;
+    bulbMesh.add(shade);
+
     bulbMesh.position.copy(bulb.position);
-    // An industrial wire cage around the bulb — children of the bulb mesh so
-    // the cage sways and flickers with it.
-    const cageMat = new THREE.MeshStandardMaterial({
-      color: 0x17191b,
-      roughness: 0.5,
-      metalness: 0.8,
-    });
-    for (const ry of [0, Math.PI / 3, -Math.PI / 3]) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.015, 6, 18), cageMat);
-      ring.rotation.y = ry;
-      bulbMesh.add(ring);
-    }
-    const cageBottom = new THREE.Mesh(new THREE.TorusGeometry(0.2, 0.015, 6, 18), cageMat);
-    cageBottom.rotation.x = Math.PI / 2;
-    cageBottom.position.y = -0.24;
-    bulbMesh.add(cageBottom);
     scene.add(bulbMesh);
     this.bulbMesh = bulbMesh;
     // The cord.
@@ -481,9 +475,20 @@ export class Renderer3D implements IRenderer {
     scene.add(cord);
 
     // A faint cold rim from behind the dealer for separation.
-    const rim = new THREE.DirectionalLight(0x2e4a44, 0.5);
+    const rim = new THREE.DirectionalLight(0x33405a, 0.45);
     rim.position.set(-4, 8, -12);
     scene.add(rim);
+
+    // Harsh hallway light outside the cell door casting long bar shadows.
+    const hallwayLight = new THREE.SpotLight(0x8aabc9, 30, 40, Math.PI / 6, 0.5, 2);
+    hallwayLight.position.set(-25, 6, -2);
+    hallwayLight.target.position.set(0, 4, -2);
+    scene.add(hallwayLight.target);
+    hallwayLight.castShadow = true;
+    hallwayLight.shadow.mapSize.set(1024, 1024);
+    hallwayLight.shadow.bias = -0.0005;
+    scene.add(hallwayLight);
+    this.hallwayLight = hallwayLight;
 
     // --- Street lamp on the right, gooseneck reaching over the table -----
     const lamp = buildMiniLamp();
@@ -673,6 +678,7 @@ export class Renderer3D implements IRenderer {
 
     const dealerBox = buildBriefcase();
     dealerBox.group.position.set(-12, SURFACE_Y, -ITEM_ROW_Z); 
+    dealerBox.group.rotation.y = Math.PI;
     dealerBox.group.visible = false;
     scene.add(dealerBox.group);
     this.dealerBox = dealerBox;
@@ -1336,12 +1342,14 @@ export class Renderer3D implements IRenderer {
   private cutToShot(target: ParticipantId, live: boolean): void {
     const shots: CamShot[] = [];
     if (target === this.localParticipant) {
-      // Self camera view: sharply look up / flinch, simulating being hit.
+      if (!this.mirrorCam && this.player) this.player.group.visible = true;
+      if (this.mirrorCam && this.dealer) this.dealer.group.visible = true;
+      // Self camera view: frame ourselves from across the table.
       shots.push({
-        pos: new THREE.Vector3(0, 5.0, PLAYER_Z + 1.0),
-        look: new THREE.Vector3(0, 10.0, 0), // Looking sharply up and forward
+        pos: new THREE.Vector3(0.4, 5.9, DEALER_Z + 4.2),
+        look: new THREE.Vector3(0, 5.4, PLAYER_Z),
         holdMs: live ? 1600 : 1100,
-        lerp: live ? 0.1 : 0.15,
+        lerp: live ? 0.05 : 0.07,
       });
     } else {
       // Push in on the hooded enemy across the table — close on the grin/eyes.
@@ -1950,6 +1958,13 @@ export class Renderer3D implements IRenderer {
         0.15 + (intensity / 42) * 2.8;
     }
 
+    if (this.hallwayLight) {
+      const hWaver = 0.85 + 0.1 * Math.sin(t * 3.7) + 0.05 * Math.sin(t * 11.2);
+      // occasional sharp flicker
+      const hBlink = Math.random() < 0.02 ? 0.2 : 1.0;
+      this.hallwayLight.intensity = 30 * hWaver * hBlink;
+    }
+
     // --- Figures breathe / sway; eyes + grin shimmer --------------------
     if (this.dealer) {
       const b = Math.sin(t * 1.3);
@@ -2052,16 +2067,16 @@ export class Renderer3D implements IRenderer {
         // Dealer Aiming
         const da = this.dealerAimT;
         if (this.aiAimingTarget === "PLAYER") {
-          targetPy += da * 4.0;
-          targetPz -= da * 7.5; // moves back to z = -5
-          targetRx = da * -0.15 - recoilPitch;
-          targetRy = -0.5 + da * 0.5;
+          targetPy += da * 1.6;
+          targetPz -= da * 2.2;
+          targetRx = da * -0.32 - recoilPitch;
+          targetRy = -0.5 + da * (Math.PI + 0.5);
           targetRz = da * (Math.PI / 2);
         } else {
-          targetPy += da * 4.0;
-          targetPz -= da * 7.5;
+          targetPy += da * 2.0;
+          targetPz -= da * 1.4;
           targetRx = da * 0.7 + recoilPitch;
-          targetRy = -0.5 + da * (Math.PI + 0.5);
+          targetRy = -0.5 + da * 0.5;
           targetRz = da * (Math.PI / 2);
         }
       }
@@ -2383,7 +2398,7 @@ export class Renderer3D implements IRenderer {
               lidAngle = (1 - easeOutCubic(closeProg)) * Math.PI * 0.6;
            }
            this.playerBox.lid.rotation.x = -lidAngle;
-           this.dealerBox.lid.rotation.x = lidAngle; 
+           this.dealerBox.lid.rotation.x = -lidAngle;
            
            // Item flying animation (1-by-1)
            const animateSlot = (slot: ItemSlot, idx: number, box: THREE.Group) => {
@@ -2700,6 +2715,10 @@ export class Renderer3D implements IRenderer {
     } else if (!this.transitioning) {
       this.camPos.lerp(this.camTargetPos, this.camLerp);
       this.camLook.lerp(this.camTargetLook, this.camLerp);
+      
+      // Hide our own body in first-person view
+      if (!this.mirrorCam && this.player) this.player.group.visible = false;
+      if (this.mirrorCam && this.dealer) this.dealer.group.visible = false;
     }
 
     // Shake on a live shot, added on top of the eased position.

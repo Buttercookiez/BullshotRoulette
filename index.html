@@ -10,8 +10,8 @@
         margin: 0;
         padding: 0;
         width: 100vw;
-        background: #090a09;
-        color: #c3cabc;
+        background: #0a0a0b;
+        color: #c9c2b0;
         font-family: "Courier New", monospace;
       }
       #app {
@@ -89,14 +89,6 @@
         font-family: "Courier New", monospace;
         position: relative;
         z-index: 52;
-        animation: rr-crt-flicker 4s infinite;
-      }
-      @keyframes rr-crt-flicker {
-        0%, 91%, 94%, 96%, 100% { opacity: 1; transform: none; }
-        92% { opacity: 0.55; transform: translateX(-2px) skewX(-1deg); }
-        93% { opacity: 0.9; transform: translateX(1px); }
-        97% { opacity: 0.75; transform: translateX(2px) skewX(0.5deg); }
-        98% { opacity: 1; transform: none; }
       }
       .rr-turn-win { 
         color: #ffffff; 
