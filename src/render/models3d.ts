@@ -1081,246 +1081,174 @@ function buildGrin(color: number, intensity: number, width: number): THREE.Mesh 
 }
 
 /**
- * The Dealer: a tall hooded figure, face lost in shadow but for two ember eyes
- * and a wide, unsettling grin. Skeletal hands rest on the table.
+ * The Dealer: a bodiless horror — one giant skull-sphere of mottled flesh-bone
+ * with hollow black sockets and a grin of long interlocking fangs wrapping the
+ * lower face, carried on two emaciated clawed arms that grow straight out of
+ * the skull and rest on the table. (Modelled after the ENEMY reference sheet.)
  */
 export function buildDealer(): FigureHandles {
   const group = new THREE.Group();
   const torso = new THREE.Group();
 
-  const suit = dress(matte(0x08080a, 0.9), "fabric", { normalScale: 0.5 }); // pit-black suit
-  const flesh = matte(0xd8d4c8, 0.55); // drained, bloodless skin
-
-  // Tall, thin lower body — a lathed robe that flares slightly at the hem.
-  const lower = lathe(
-    [
-      [1.05, 0.0],
-      [0.92, 0.4],
-      [0.8, 1.6],
-      [0.72, 2.8],
-      [0.68, 4.2],
-    ],
-    suit,
-    14,
+  // Mottled flesh-over-bone hide: dark bruised brown, leathery. Kept very
+  // dark so the warm bulb light can't turn it salmon.
+  const hide = dress(
+    new THREE.MeshStandardMaterial({ color: 0x3a2b21, roughness: 0.88, metalness: 0.03 }),
+    "leather",
+    { normalScale: 1.1 },
   );
-  group.add(lower);
-  // Ragged hem strips around the base of the robe.
-  for (let i = 0; i < 9; i++) {
-    const a = (i / 9) * Math.PI * 2 + 0.2;
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.5 + (i % 3) * 0.2, 0.04), suit);
-    strip.position.set(Math.cos(a) * 0.98, 0.22 + (i % 3) * 0.06, Math.sin(a) * 0.98);
-    strip.rotation.y = -a + Math.PI / 2;
-    strip.rotation.x = (i % 2 === 0 ? 1 : -1) * 0.08;
-    group.add(strip);
-  }
+  const hideDark = dress(matte(0x281c14, 0.94), "leather", { normalScale: 1.0 });
 
-  // Gaunt torso: a tapered capsule ribcage under the jacket, with sharp
-  // shoulder pads and hanging lapels.
-  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.62, 1.5, 4, 12), suit);
-  chest.scale.set(1.1, 1, 0.62);
-  chest.position.y = 4.4;
-  torso.add(chest);
-  const shoulderPadGeo = new THREE.SphereGeometry(0.32, 10, 8);
-  for (const sx of [-1, 1] as const) {
-    const pad = new THREE.Mesh(shoulderPadGeo, suit);
-    pad.scale.set(1.25, 0.62, 0.9);
-    pad.position.set(sx * 0.62, 5.25, 0.05);
-    torso.add(pad);
-  }
-  // Lapels: two thin angled slabs meeting at the sternum.
-  for (const sx of [-1, 1] as const) {
-    const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.15, 0.05), matte(0x0c0c10, 0.85));
-    lapel.position.set(sx * 0.24, 4.6, 0.42);
-    lapel.rotation.z = sx * -0.32;
-    lapel.rotation.y = sx * 0.18;
-    torso.add(lapel);
-  }
-  // Waist cinch.
-  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 0.7, 12), suit);
-  waist.position.y = 3.25;
-  torso.add(waist);
-
-  // Thin neck — too long, craned FORWARD over the table and kinked slightly
-  // sideways, like something once broken that set wrong.
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 1.0, 10), flesh);
-  neck.position.set(0.02, 5.72, 0.1);
-  neck.rotation.x = 0.12; // craned slightly toward the player
-  neck.rotation.z = -0.08; // the sideways kink
-  torso.add(neck);
-  for (const sx of [-1, 1] as const) {
-    const tendon = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.6, 2, 6), flesh);
-    tendon.position.set(sx * 0.12, 5.7, 0.28);
-    tendon.rotation.x = 0.3;
-    tendon.rotation.z = sx * -0.12;
-    torso.add(tendon);
-  }
-
-  // The Head: a lathed porcelain mask — chin, hollow cheeks, brow ridge —
-  // rather than a scaled sphere. Rotationally shaped, then squashed slightly
-  // front-to-back so the face plane reads under the light.
-  const maskMat = dress(
-    new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.85, metalness: 0.05 }),
-    "plaster",
-    { normalScale: 0.35 },
-  );
-  const head = lathe(
-    [
-      [0.0, -0.85], // chin point
-      [0.3, -0.75], // jaw
-      [0.5, -0.5], // hollow cheek
-      [0.62, -0.15],
-      [0.72, 0.2], // cheekbone / brow swell
-      [0.78, 0.45], // brow ridge
-      [0.72, 0.7],
-      [0.5, 0.9],
-      [0.0, 1.0], // crown
-    ],
-    maskMat,
-    20,
-  );
-  head.scale.set(1.05, 1.0, 0.88);
-  // Tilted down off the kinked neck to stare at the table. Kept at the same
-  // anchor so the face features (sockets/grin/teeth placed in torso space)
-  // stay seated on the mask.
-  head.position.set(0, 6.55, 0.2);
-  head.rotation.x = 0.1;
-  head.rotation.z = -0.05;
-  torso.add(head);
-  // Brow shelf shading the sockets.
-  const brow = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.14, 0.3), maskMat);
-  brow.position.set(0, 6.92, 0.78);
-  brow.rotation.x = 0.25;
-  torso.add(brow);
-
-  // Hollow dark eye sockets — recessed hemispheres under the brow.
-  const socketMat = matte(0x050505, 0.9);
-  const eyeMat = glow(0xd8ffe4, 0.4);
-  const socketGeo = new THREE.SphereGeometry(0.19, 12, 10);
-  const skL = new THREE.Mesh(socketGeo, socketMat);
-  skL.scale.set(1.2, 0.85, 0.6);
-  skL.position.set(-0.32, 6.7, 0.88);
-  const skR = new THREE.Mesh(socketGeo, socketMat);
-  skR.scale.set(1.2, 0.85, 0.6);
-  skR.position.set(0.32, 6.7, 0.88);
-  torso.add(skL, skR);
-  // Spiderwebbed cracks across the porcelain — one long fault plus branches.
-  const crackMat = matte(0x141414, 0.9);
-  const crack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.85, 0.02), crackMat);
-  crack.position.set(0.42, 6.65, 0.92);
-  crack.rotation.z = 0.18;
-  crack.rotation.x = -0.1;
-  torso.add(crack);
-  for (const [cx, cy, len, rz] of [
-    [0.34, 7.0, 0.3, 0.9],
-    [0.5, 6.35, 0.26, -0.6],
-    [-0.28, 7.15, 0.34, 0.5],
-    [-0.44, 6.5, 0.24, -1.1],
+  // --- The skull: a huge near-sphere, slightly taller than wide, its face
+  // flattened where the features sink in. Centre y=4.2, radius ~2.35.
+  const R = 2.35;
+  const skull = new THREE.Mesh(new THREE.SphereGeometry(R, 28, 22), hide);
+  skull.scale.set(1.0, 1.06, 0.98);
+  skull.position.y = 4.2;
+  torso.add(skull);
+  // Bruised mottling: irregular darker patches sunk INTO the surface so they
+  // read as staining rather than dots stuck on top.
+  for (const [ma, mb, mr, msq] of [
+    [0.4, 1.1, 0.7, 0.6],
+    [-0.9, 0.9, 0.95, 0.5],
+    [2.4, 0.7, 0.8, 0.7],
+    [-2.2, 0.4, 0.65, 0.45],
+    [3.0, -0.2, 0.85, 0.6],
+    [1.6, -0.5, 0.6, 0.5],
+    [-1.4, -0.3, 0.7, 0.65],
   ] as const) {
-    const branch = new THREE.Mesh(new THREE.BoxGeometry(0.015, len, 0.015), crackMat);
-    branch.position.set(cx, cy, 0.9);
-    branch.rotation.z = rz;
-    branch.rotation.x = -0.1;
-    torso.add(branch);
+    // ma = azimuth, mb = elevation (radians), mr = patch radius, msq = squash
+    const patch = new THREE.Mesh(new THREE.SphereGeometry(mr, 10, 8), hideDark);
+    patch.scale.set(1.4, msq, 0.12); // wide, flat smears hugging the surface
+    const px = Math.sin(ma) * Math.cos(mb) * (R - 0.12);
+    const py = Math.sin(mb) * (R - 0.12) * 1.06 + 4.2;
+    const pz = Math.cos(ma) * Math.cos(mb) * (R - 0.12) * 0.98;
+    patch.position.set(px, py, pz);
+    patch.lookAt(0, 4.2, 0);
+    patch.rotation.z += ma * 0.6; // vary the smear direction
+    torso.add(patch);
   }
-  // Black tear streaks weeping from the inner corner of each socket.
-  const tearMat = matte(0x0a0a0c, 0.55);
+
+  // --- Hollow eye sockets: deep black pits, the left fractionally larger —
+  // rimmed with a swollen ridge of flesh.
+  const socketMat = matte(0x030303, 0.95);
+  const eyeMat = glow(0xd8ffe4, 0.4);
   for (const sx of [-1, 1] as const) {
-    const tear = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.55, 0.02), tearMat);
-    tear.position.set(sx * 0.24, 6.35, 0.96);
-    tear.rotation.z = sx * -0.08;
-    tear.rotation.x = -0.12;
-    torso.add(tear);
-    const tearEnd = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), tearMat);
-    tearEnd.scale.set(1, 1.6, 0.5);
-    tearEnd.position.set(sx * 0.28, 6.06, 0.97);
-    torso.add(tearEnd);
+    const big = sx === -1;
+    const socket = new THREE.Mesh(new THREE.SphereGeometry(big ? 0.6 : 0.54, 14, 12), socketMat);
+    socket.scale.set(1, 1.12, 0.5);
+    socket.position.set(sx * 0.92, 5.6, 1.72);
+    torso.add(socket);
+    const rim = new THREE.Mesh(new THREE.TorusGeometry(big ? 0.62 : 0.56, 0.09, 8, 18), hideDark);
+    rim.position.set(sx * 0.92, 5.6, 1.68);
+    rim.rotation.x = -0.35;
+    rim.scale.set(1, 1.1, 1);
+    torso.add(rim);
+    // A pinprick glint lost deep in each pit (the renderer flares these).
+    const glint = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), eyeMat);
+    glint.position.set(sx * 0.9, 5.57, 1.76);
+    torso.add(glint);
   }
 
-  // Pinprick pupils — asymmetric: one sits fractionally lower and dimmer,
-  // so the stare never quite focuses on you.
-  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeMat);
-  eyeL.position.set(-0.35, 6.7, 0.98);
-  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.048, 8, 8), eyeMat);
-  eyeR.position.set(0.35, 6.66, 0.98);
-  torso.add(eyeL, eyeR);
+  // --- Nose: a small collapsed hollow between the sockets.
+  const noseHole = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), socketMat);
+  noseHole.scale.set(0.8, 1.1, 0.4);
+  noseHole.position.set(0, 5.05, 2.2);
+  torso.add(noseHole);
 
-  // The grin: torn wider than the mask allows, curling up at both ends,
-  // with a dim ember of dried blood glowing behind the teeth.
-  const mouthMat = glow(0x2a0806, 0.2);
-  const grinMesh = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.24, 0.2), mouthMat);
-  grinMesh.position.set(0, 6.08, 0.95);
-  torso.add(grinMesh);
-  for (const sx of [-1, 1] as const) {
-    // Upturned grin corners slashed into the cheeks.
-    const corner = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.16), mouthMat);
-    corner.position.set(sx * 0.6, 6.2, 0.88);
-    corner.rotation.z = sx * 0.55;
-    torso.add(corner);
-    // Crude suture bars stitched across each torn corner.
-    for (let s = 0; s < 3; s++) {
-      const stitch = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.16, 0.02), crackMat);
-      stitch.position.set(sx * (0.52 + s * 0.11), 6.16 + s * 0.06, 0.99);
-      stitch.rotation.z = sx * -0.9;
-      torso.add(stitch);
-    }
+  // --- The maw: a vast dark cavity across the mid-face — raised high enough
+  // to clear the table edge, glowing faintly from within (mouthMat — the
+  // renderer flares it on shots).
+  const mouthMat = glow(0x1c0503, 0.25);
+  mouthMat.roughness = 0.95; // dead matte — a void, not a glossy bulge
+  const maw = new THREE.Mesh(new THREE.SphereGeometry(1.0, 20, 14), mouthMat);
+  maw.scale.set(2.15, 0.9, 0.62);
+  maw.position.set(0, 4.15, 1.28); // recessed INTO the skull so fangs stand proud
+  torso.add(maw);
+  // Swollen lip ridges above and below the maw.
+  for (const [ly, lr] of [
+    [4.9, 2.0],
+    [3.4, 1.95],
+  ] as const) {
+    const lip = new THREE.Mesh(new THREE.TorusGeometry(lr, 0.14, 8, 24, Math.PI * 1.1), hideDark);
+    lip.position.set(0, ly, 0.6);
+    lip.rotation.x = Math.PI / 2;
+    lip.rotation.z = -Math.PI * 0.05;
+    torso.add(lip);
   }
 
-  // Crooked, uneven teeth — stained bone, longer than they should be, with
-  // two fangs dropping below the lip line and a black gap where one is gone.
-  const toothMat = matte(0xcfc8b4, 0.9);
-  for (let i = 0; i < 9; i++) {
-    if (i === 6) continue; // the missing tooth
-    const tx = -0.48 + (i / 8) * 0.96;
-    const isFang = i === 1 || i === 7;
-    const jag = isFang ? 0.14 : i % 3 === 0 ? 0.05 : i % 2 === 0 ? -0.03 : 0.01;
+  // --- Fangs: two interlocking rows of long, thin, uneven spikes following
+  // the curve of the face — the signature of the reference sheet.
+  const toothMat = dress(matte(0xc9bda4, 0.85), "plaster", { normalScale: 0.4 });
+  const toothStained = matte(0x9a8768, 0.85);
+  // Upper row: 13 long fangs pointing down.
+  for (let i = 0; i < 13; i++) {
+    const a = -1.05 + (i / 12) * 2.1; // arc around the face (azimuth)
+    const jag = (i * 7919) % 5; // deterministic unevenness
+    const len = 0.75 + jag * 0.09 + (i % 2) * 0.12;
     const tooth = new THREE.Mesh(
-      new THREE.ConeGeometry(0.045, 0.24 + jag, 5),
-      toothMat,
+      new THREE.ConeGeometry(0.085, len, 6),
+      jag > 2 ? toothStained : toothMat,
     );
-    tooth.rotation.x = Math.PI; // point downward
-    tooth.position.set(tx, 6.08 - jag * 0.5, 1.02);
-    tooth.rotation.z = i % 2 === 0 ? 0.09 : -0.06;
+    tooth.rotation.x = Math.PI; // point down
+    tooth.position.set(Math.sin(a) * 2.0, 4.75 - len / 2, Math.cos(a) * 1.62 + 0.62);
+    tooth.rotation.z = ((i % 3) - 1) * 0.08;
+    tooth.rotation.y = a;
+    torso.add(tooth);
+  }
+  // Lower row: 11 shorter fangs pointing up, offset to interlock.
+  for (let i = 0; i < 11; i++) {
+    const a = -0.95 + (i / 10) * 1.9 + 0.08;
+    const jag = (i * 104729) % 4;
+    const len = 0.55 + jag * 0.08;
+    const tooth = new THREE.Mesh(
+      new THREE.ConeGeometry(0.075, len, 6),
+      jag > 1 ? toothStained : toothMat,
+    );
+    tooth.position.set(Math.sin(a) * 1.95, 3.5 + len / 2, Math.cos(a) * 1.58 + 0.62);
+    tooth.rotation.z = ((i % 3) - 1) * -0.07;
+    tooth.rotation.y = a;
     torso.add(tooth);
   }
 
-  // Sickly cold underlight, thrown up from below the chin
-  const faceLight = new THREE.PointLight(0xbfe8c8, 1.9, 3.4, 2);
-  faceLight.position.set(0, 5.9, 1.3);
-  torso.add(faceLight);
-
-  // Bone antler-stubs breaking through the mask crown.
-  const boneMat = matte(0xb8ac96, 0.8);
-  for (const sx of [-1, 1] as const) {
-    const stub = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 6), boneMat);
-    stub.position.set(sx * 0.4, 7.55, 0.1);
-    stub.rotation.z = sx * -0.45;
-    stub.rotation.x = -0.15;
-    torso.add(stub);
-    const tine = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 5), boneMat);
-    tine.position.set(sx * 0.52, 7.6, 0.14);
-    tine.rotation.z = sx * -0.95;
-    torso.add(tine);
+  // --- Dried blood staining running from the sockets and maw corners.
+  const gore = matte(0x3d120c, 0.7);
+  for (const [gx, gy, gl, grz] of [
+    [-0.95, 5.0, 0.7, 0.1],
+    [0.98, 5.05, 0.55, -0.15],
+    [-1.85, 4.1, 0.5, 0.5],
+    [1.8, 4.05, 0.55, -0.5],
+  ] as const) {
+    const streak = new THREE.Mesh(new THREE.BoxGeometry(0.1, gl, 0.04), gore);
+    streak.position.set(gx, gy, 1.95);
+    streak.rotation.z = grz;
+    streak.rotation.x = -0.15;
+    torso.add(streak);
   }
 
-  // Arms — monstrous: too long, clawed, leathery. Same pivots and rest
-  // rotations as before so all renderer arm animations keep working.
-  const restArm = buildMonsterArm(suit, 1.2, true);
-  restArm.position.set(0.7, 4.8, 0.4);
+  // Sickly cold underlight thrown up into the maw and sockets.
+  const faceLight = new THREE.PointLight(0xbfe8c8, 2.2, 4.5, 2);
+  faceLight.position.set(0, 4.0, 2.7);
+  torso.add(faceLight);
+
+  // --- Arms: emaciated limbs growing straight out of the skull's sides,
+  // reaching forward so the claws rest on the table. Same rest rotations
+  // (x=-1.15, z=±0.2) so all renderer arm animations keep working.
+  const restArm = buildMonsterArm(hide, 1.45, true, hideDark);
+  restArm.position.set(2.05, 4.0, 0.5);
   restArm.rotation.x = -1.15;
   restArm.rotation.z = -0.2;
   torso.add(restArm);
 
-  const arm = buildMonsterArm(suit, 1.2, false);
-  arm.position.set(-0.7, 4.8, 0.4);
+  const arm = buildMonsterArm(hide, 1.45, false, hideDark);
+  arm.position.set(-2.05, 4.0, 0.5);
   const armRestX = -1.15;
   arm.rotation.x = armRestX;
   arm.rotation.z = 0.2;
   torso.add(arm);
 
   group.add(torso);
-  // Unnaturally tall and thin: stretched vertically, pinched inward.
-  group.scale.set(0.94, 1.18, 0.96);
-  // The head sits fractionally off-plumb — wrong in a way you can't name.
+  // The skull sits fractionally off-plumb — wrong in a way you can't name.
   torso.rotation.z = 0.02;
   castReceive(group, true, false);
   return { group, torso, eyeMat, mouthMat, arm, armRestX, restArm };
@@ -1609,12 +1537,13 @@ function buildMonsterArm(
   coat: THREE.MeshStandardMaterial,
   scale = 1,
   mirror = false,
+  hideOverride?: THREE.MeshStandardMaterial,
 ): THREE.Group {
   const arm = new THREE.Group();
   const s = scale;
   const m = mirror ? -1 : 1;
-  // Leathery, drowned-grey monster skin.
-  const hide = dress(matte(0x4a5246, 0.85), "leather", { normalScale: 0.9 });
+  // Leathery monster skin (drowned-grey default, or the caller's flesh).
+  const hide = hideOverride ?? dress(matte(0x4a5246, 0.85), "leather", { normalScale: 0.9 });
   const talon = new THREE.MeshStandardMaterial({ color: 0x0c0c0e, metalness: 0.3, roughness: 0.35 });
 
   // Shoulder cap under the sleeve.
