@@ -77,12 +77,19 @@ serve(async (req: Request) => {
         .update({ first_turn: firstTurn, state: newState })
         .eq("id", match_id);
     } else {
-      // Someone already picked — reload to read their claim and the new state.
-      const { data: m2 } = await supabase
-        .from("matches")
-        .select("coin_pick_by, coin_pick, state")
-        .eq("id", match_id)
-        .single();
+      // Someone already picked — reload to read their claim.
+      // Retry up to 4 times (each ~80ms) in case the first player's DB write
+      // hasn't committed yet (race condition when both pick simultaneously).
+      let m2: any = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data } = await supabase
+          .from("matches")
+          .select("coin_pick_by, coin_pick, state, first_turn")
+          .eq("id", match_id)
+          .single();
+        if (data?.coin_pick_by) { m2 = data; break; }
+        await new Promise((r) => setTimeout(r, 80));
+      }
       firstPickBy = m2?.coin_pick_by ?? match.player1_id;
       firstPick = m2?.coin_pick ?? true;
       newState = m2?.state ?? match.state;

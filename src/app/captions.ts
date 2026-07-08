@@ -30,6 +30,42 @@ export function itemCaption(item: ItemType): Caption {
 }
 
 /**
+ * Remap a `GameEvent` so TURN_PASSED / MATCH_OVER use "you" for the LOCAL
+ * participant. Pass `localParticipant` for multiplayer; omit for single-player
+ * (defaults to "PLAYER").
+ */
+export function captionForLocal(
+  event: GameEvent,
+  localParticipant: "PLAYER" | "AI" = "PLAYER",
+): Caption | null {
+  if (event.type === "TURN_PASSED") {
+    const isYourTurn = event.to === localParticipant;
+    return isYourTurn
+      ? { title: "YOUR TURN", desc: "The iron waits for your hand." }
+      : { title: "OPPONENT'S TURN", desc: "They reach for the gun." };
+  }
+  if (event.type === "MATCH_OVER") {
+    const youWon = event.winner === localParticipant;
+    return youWon
+      ? { title: "YOU SURVIVE", desc: "The darkness swallows your opponent." }
+      : { title: "YOU DIE", desc: "The gun remembers your name." };
+  }
+  if (event.type === "LIVE_FIRED") {
+    const youWereHit = event.target === localParticipant;
+    return youWereHit
+      ? { title: "BANG", desc: "The round tears through you." }
+      : { title: "BANG", desc: "Your shot lands. They bleed." };
+  }
+  if (event.type === "BLANK_FIRED") {
+    const youWereTarget = event.target === localParticipant;
+    return youWereTarget
+      ? { title: "CLICK", desc: "Empty. You breathe again \u2014 for now." }
+      : { title: "CLICK", desc: "Empty. They let out a slow breath." };
+  }
+  return captionFor(event);
+}
+
+/**
  * Map a `GameEvent` to its caption, or `null` to show nothing. Pure.
  */
 export function captionFor(event: GameEvent): Caption | null {
@@ -54,9 +90,11 @@ export function captionFor(event: GameEvent): Caption | null {
     case "TURN_SKIPPED":
       return { title: "BOUND", desc: `${who(event.participant)} cannot move.` };
     case "TURN_PASSED":
+      // In single-player PLAYER is always local. In multiplayer the caller
+      // remaps using the `localParticipant` it passes in — see captionForLocal.
       return event.to === "PLAYER"
         ? { title: "YOUR TURN", desc: "The iron waits for your hand." }
-        : { title: "THE DEALER'S TURN", desc: "It reaches for the gun, grinning." };
+        : { title: "OPPONENT'S TURN", desc: "They reach for the gun." };
     case "MATCH_OVER":
       return event.winner === "PLAYER"
         ? { title: "YOU SURVIVE", desc: "The dealer fades into the dark." }

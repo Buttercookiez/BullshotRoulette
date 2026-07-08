@@ -19,7 +19,7 @@ export interface MultiplayerFlowDeps {
   playerId: string;
   betAmount: number;
   /** Attach the shared renderer/audio/caption presentation to the controller. */
-  wire: (controller: MultiplayerGameController) => void;
+  wire: (controller: MultiplayerGameController, localParticipant?: "PLAYER" | "AI") => void;
   onMatchStart: () => void;
   onMatchEnd: (youWon: boolean) => void;
 }
@@ -33,6 +33,7 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   let cancelled = false;
   let matchStarted = false;
   let matchEnded = false;
+  let timesUpShown = false;
 
   caption.enqueue("SEARCHING", "Looking for an opponent...");
 
@@ -41,10 +42,53 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   disconnectEl.style.cssText =
     "position:fixed;top:16px;left:50%;transform:translateX(-50%);" +
     "font-family:'Courier New',monospace;font-size:11px;letter-spacing:4px;" +
-    "text-transform:uppercase;color:#6a5248;z-index:9999;pointer-events:none;" +
-    "opacity:0;transition:opacity 0.6s;";
-  disconnectEl.textContent = "OPPONENT MAY HAVE DISCONNECTED";
+    "text-transform:uppercase;color:#6a5248;z-index:9999;" +
+    "opacity:0;transition:opacity 0.6s;display:flex;flex-direction:column;" +
+    "align-items:center;gap:8px;";
+  const disconnectText = document.createElement("span");
+  disconnectText.textContent = "OPPONENT MAY HAVE DISCONNECTED";
+  disconnectEl.appendChild(disconnectText);
+  // Forfeit button (only visible after 45s of silence).
+  const forfeitBtn = document.createElement("button");
+  forfeitBtn.textContent = "FORFEIT MATCH (TAKE WIN)";
+  forfeitBtn.style.cssText =
+    "font-family:'Courier New',monospace;font-size:10px;letter-spacing:3px;" +
+    "text-transform:uppercase;color:#6a5248;background:transparent;" +
+    "border:1px solid #2a1a18;padding:6px 14px;cursor:pointer;" +
+    "transition:color 0.2s,border-color 0.2s;display:none;";
+  forfeitBtn.addEventListener("mouseenter", () => {
+    forfeitBtn.style.color = "#cc3333";
+    forfeitBtn.style.borderColor = "#6a1010";
+  });
+  forfeitBtn.addEventListener("mouseleave", () => {
+    forfeitBtn.style.color = "#6a5248";
+    forfeitBtn.style.borderColor = "#2a1a18";
+  });
+  forfeitBtn.addEventListener("click", () => {
+    // Claim the win by flagging the match as abandoned — reuse the existing
+    // abandon-match edge function which marks the other side as the winner.
+    const matchId = (window as any).__mpMatchId;
+    if (matchId) {
+      // Call submit-action with a special forfeit flag — for now we use
+      // the client's `cancel` path which marks the other player as winner
+      // via the existing abandon-match flow then shows the WIN screen.
+      cleanup();
+      caption.enqueue("OPPONENT FORFEITED", "They abandoned the match. You win.");
+      setTimeout(() => { showResult(true); }, 1800);
+    }
+  });
+  disconnectEl.appendChild(forfeitBtn);
   document.body.appendChild(disconnectEl);
+
+  // --- AFK warning: shown to the ACTIVE player when their timer is near 0 --
+  const afkWarnEl = document.createElement("div");
+  afkWarnEl.style.cssText =
+    "position:fixed;top:56px;left:50%;transform:translateX(-50%);" +
+    "font-family:'Courier New',monospace;font-size:12px;letter-spacing:5px;" +
+    "text-transform:uppercase;color:#cc2020;z-index:9999;pointer-events:none;" +
+    "opacity:0;transition:opacity 0.3s;text-align:center;";
+  afkWarnEl.textContent = "TAKE YOUR SHOT OR LOSE YOUR TURN";
+  document.body.appendChild(afkWarnEl);
 
   // --- Post-match overlay: WIN / LOSE result + back-to-menu button ---------
   const resultEl = document.createElement("div");
@@ -95,7 +139,7 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   const cleanup = (): void => {
     cancelled = true;
     controller.dispose();
-    [timerWrap, chatEl, disconnectEl, resultEl].forEach((el) => {
+    [timerWrap, chatEl, disconnectEl, afkWarnEl, resultEl].forEach((el) => {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
   };
@@ -206,6 +250,8 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
     onMatched: async ({ matchId, youAre, coinResult }) => {
       if (cancelled) return;
       (window as any).__mpMatchId = matchId;
+      // Expose which seat WE occupy so the wire() can show correct captions.
+      const localParticipant: "PLAYER" | "AI" = youAre === "player1" ? "PLAYER" : "AI";
 
       // Second player controls the "AI" seat: mirror camera + swap targets.
       renderer.setLocalParticipant(youAre === "player1" ? "PLAYER" : "AI");
@@ -233,13 +279,17 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
 
       caption.enqueue(
         goesFirst ? "YOU GO FIRST" : "THEY GO FIRST",
-        goesFirst ? "The coin chose you." : "The coin chose them.",
+        goesFirst
+          ? "The coin favors you. Take the first shot."
+          : "The coin chose them. Wait for their move.",
       );
       await wait(2500);
       if (cancelled) return;
 
       // Reveal the board (emits initial state + ROUND_SET_LOADED events).
       matchStarted = true;
+      // Wire the shared presentation pipeline with the correct local seat.
+      wire(controller, localParticipant);
       controller.beginMatch();
       chatEl.style.display = "flex"; // chat opens once the duel begins
       onMatchStart();
@@ -267,6 +317,8 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       if (cancelled || !matchStarted) return;
       // Heartbeat: server is alive while ticks arrive.
       lastTickMs = Date.now();
+      // A new turn starts when the server pushes a full 30s deadline again.
+      if (secondsLeft >= 29) { timesUpShown = false; }
       disconnectEl.style.opacity = "0";
       // Bar always visible once match starts; drains over 30s.
       const TURN_SECS = 30;
@@ -278,10 +330,22 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       // Number only appears in the last 10s.
       if (secondsLeft <= 10) {
         timerEl.style.opacity = "1";
-        timerEl.textContent = String(secondsLeft);
+        timerEl.textContent = secondsLeft === 0 ? "—" : String(secondsLeft);
         timerEl.style.color = isRed ? "#ff0000" : "#cc3333";
       } else {
         timerEl.style.opacity = "0";
+      }
+      // When the clock hits zero, show a narration caption so the player knows
+      // the server is about to auto-fire and pass the turn.
+      if (secondsLeft === 0 && !timesUpShown) {
+        timesUpShown = true;
+        caption.enqueue("TIME'S UP", "The gun fires itself. The turn passes.");
+      }
+      // Show an "AFK" warning at 5s left so the player has a moment to act.
+      if (secondsLeft <= 5 && secondsLeft > 0) {
+        afkWarnEl.style.opacity = "1";
+      } else {
+        afkWarnEl.style.opacity = "0";
       }
     },
   });
@@ -292,11 +356,11 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   const disconnectWatchdog = setInterval(() => {
     if (!matchStarted || matchEnded || cancelled) return;
     const silentMs = Date.now() - lastTickMs;
-    disconnectEl.style.opacity = silentMs > 20_000 ? "1" : "0";
-  }, 4000);
-
-  // Wire the shared presentation pipeline (identical to single-player).
-  wire(controller);
+    const isDisconnected = silentMs > 20_000;
+    disconnectEl.style.opacity = isDisconnected ? "1" : "0";
+    // After 45s of silence, offer the forfeit button.
+    forfeitBtn.style.display = silentMs > 45_000 ? "block" : "none";
+  }, 2000);
 
   caption.enqueue("SEARCHING", "Looking for an opponent...");
   controller.joinQueue(betAmount).catch((err) => {

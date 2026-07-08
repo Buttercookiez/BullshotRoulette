@@ -41,7 +41,7 @@ export interface MultiplayerConfig {
 }
 
 const QUEUE_POLL_MS = 2000;
-const MATCH_POLL_MS = 1200;
+const MATCH_POLL_MS = 800;
 
 export class MultiplayerClient {
   private supabase: SupabaseClient;
@@ -60,6 +60,7 @@ export class MultiplayerClient {
   private lastEventSeq = 0;
   private matchOverFired = false;
   private destroyed = false;
+  private currentState: import("../engine/types").GameState | null = null;
   /** Realtime broadcast channel used for in-match chat. */
   private chatChannel: ReturnType<SupabaseClient["channel"]> | null = null;
 
@@ -337,8 +338,10 @@ export class MultiplayerClient {
   }
 
   private applyServerRow(state: GameState, deadline: string | null): void {
+    this.currentState = state;
     this.config.onStateChange(state);
     if (deadline && state.winner === null) {
+      this.afkProbeCount = 0; // new turn — reset AFK probe counter
       this.turnDeadline = new Date(deadline).getTime();
       this.startTimer();
     } else {
@@ -355,13 +358,33 @@ export class MultiplayerClient {
     this.config.onMatchOver(winnerId === this.playerId);
   }
 
+  private afkProbeCount = 0;
+
   private startTimer(): void {
     this.stopTimer();
-    this.timerInterval = setInterval(() => {
+    this.timerInterval = setInterval(async () => {
       if (!this.turnDeadline) return;
       const left = Math.max(0, Math.ceil((this.turnDeadline - Date.now()) / 1000));
       this.config.onTimerTick(left);
-      if (left <= 0) this.stopTimer();
+      if (left <= 0) {
+        this.stopTimer();
+        // If it's NOT our turn and the deadline passed, the other player is AFK.
+        // Probe submit-action so the server triggers their auto-shot.
+        if (!this.matchId || !this.currentState) return;
+        const activeParticipant = this.currentState.activeParticipant;
+        const myParticipant = this.youAre === "player1" ? "PLAYER" : "AI";
+        if (activeParticipant !== myParticipant && this.afkProbeCount < 6) {
+          this.afkProbeCount++;
+          // Fire a probe — the server will proxy-trigger the AFK auto-shoot.
+          await this.supabase.functions.invoke("submit-action", {
+            body: {
+              match_id: this.matchId,
+              player_id: this.playerId,
+              action: { kind: "SHOOT", target: activeParticipant },
+            },
+          }).catch(() => {});
+        }
+      }
     }, 1000);
   }
 

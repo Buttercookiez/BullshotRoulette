@@ -22,7 +22,7 @@ import { remainingCounts } from "./engine/cylinder";
 import { SeededRng, SystemRng, type RNG } from "./rng/rng";
 import { ActionPanel } from "./app/controls";
 import { CaptionView } from "./app/caption";
-import { captionFor, itemCaption } from "./app/captions";
+import { captionForLocal, itemCaption } from "./app/captions";
 import { initSettings, initItemCards } from "./app/landing";
 import { installFilmOverlay } from "./render/filmOverlay";
 import { gsap } from "gsap";
@@ -246,7 +246,7 @@ async function bootstrap(): Promise<void> {
   // The presentation pipeline, factored so BOTH the single-player controller
   // and the multiplayer controller drive the renderer/audio/captions through
   // the exact same code path (only the source of state/events differs).
-  const wire = (ctrl: PresentationController): void => {
+  const wire = (ctrl: PresentationController, localParticipant: "PLAYER" | "AI" = "PLAYER"): void => {
   ctrl.onStateChange((state) => {
     renderer.render(state);
     if (state.phase === "MATCH_OVER") {
@@ -279,9 +279,9 @@ async function bootstrap(): Promise<void> {
         renderer.playActionFeedback(event);
       }
       
-      const cap = captionFor(event);
-      if (cap) {
-        if (event.type === "ITEM_USED" && event.item === "MAGNIFYING_GLASS") {
+      const cap = captionForLocal(event, localParticipant);
+        if (cap) {
+          if (event.type === "ITEM_USED" && event.item === "MAGNIFYING_GLASS") {
           const state = ctrl.getState();
           const revealed = state.participants[event.by].revealedCurrentChamber;
           if (revealed) {

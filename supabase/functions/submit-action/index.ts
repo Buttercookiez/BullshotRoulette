@@ -61,6 +61,37 @@ serve(async (req: Request) => {
     else if (player_id === match.player2_id) playerSlot = "player2";
     else return new Response(JSON.stringify({ error: "Not a participant" }), { status: 403, headers: corsHeaders });
 
+    // --- Proxy-trigger AFK auto-action when the ACTIVE player's time ran out ---
+    // This handles the case where the active player went AFK and never submitted.
+    // If OUR player is NOT the active one, but the active player's deadline passed,
+    // call ourselves recursively as the active player to trigger the auto-shoot.
+    const activeParticipant: string = match.state?.activeParticipant ?? "PLAYER";
+    const activeSlot = activeParticipant === "PLAYER" ? "player1" : "player2";
+    if (activeSlot !== playerSlot && match.turn_deadline && new Date(match.turn_deadline) < new Date()) {
+      // The active player is AFK. Fire a proxy request so the auto-shoot logic runs.
+      const activePlayerId = activeSlot === "player1" ? match.player1_id : match.player2_id;
+      const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+      try {
+        await fetch(`${supabaseUrl}/functions/v1/submit-action`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${serviceKey}`,
+          },
+          body: JSON.stringify({
+            match_id,
+            player_id: activePlayerId,
+            action: { kind: "SHOOT", target: activeParticipant },
+          }),
+        });
+      } catch {
+        // Best-effort; don't block the caller.
+      }
+      // Return a soft-error so the calling client retries on next poll.
+      return new Response(JSON.stringify({ ok: false, reason: "afk_triggered" }), { status: 200, headers: corsHeaders });
+    }
+
     // Map player slots to engine ParticipantIds.
     // player1 = "PLAYER", player2 = "AI" (reusing the engine's two-participant model).
     const participantId = playerSlot === "player1" ? "PLAYER" : "AI";
@@ -74,10 +105,64 @@ serve(async (req: Request) => {
 
     // Check turn timeout — if deadline has passed, auto-shoot-self.
     const now = new Date();
-    if (match.turn_deadline && new Date(match.turn_deadline) < now) {
+    // 1.5s grace buffer: a player who submits up to 1.5s after the deadline
+    // still has their action honoured (network latency forgiveness).
+    const GRACE_MS = 1500;
+    const timedOut = match.turn_deadline &&
+      new Date(match.turn_deadline).getTime() + GRACE_MS < now.getTime();
+    if (timedOut) {
       // Time's up — force a self-shot as punishment.
       action.kind = "SHOOT";
       action.target = participantId;
+    }
+
+    // --- AFK forfeit: if a player times out 3 turns in a row, opponent wins ---
+    // Track per-player AFK strikes in the match row (afk_strikes_p1 / afk_strikes_p2).
+    let afkStrikes = playerSlot === "player1"
+      ? (match.afk_strikes_p1 ?? 0)
+      : (match.afk_strikes_p2 ?? 0);
+
+    if (timedOut) {
+      afkStrikes += 1;
+      // Write the updated strike count immediately.
+      const strikeField = playerSlot === "player1" ? "afk_strikes_p1" : "afk_strikes_p2";
+      await supabase.from("matches").update({ [strikeField]: afkStrikes }).eq("id", match_id);
+
+      if (afkStrikes >= 3) {
+        // Forfeit: the OTHER player wins.
+        const forfeitWinnerId = playerSlot === "player1" ? match.player2_id : match.player1_id;
+        const pot = match.bet_amount * 2;
+        await supabase.rpc("add_balance", { p_id: forfeitWinnerId, amount: pot });
+        await supabase.rpc("increment_wins", { p_id: forfeitWinnerId });
+        await supabase.rpc("increment_losses", { p_id: player_id });
+        await supabase.from("matches").update({
+          status: "finished",
+          winner_id: forfeitWinnerId,
+          finished_at: new Date().toISOString(),
+        }).eq("id", match_id);
+
+        // Broadcast forfeit to both players.
+        await supabase.channel(`match:${match_id}`).send({
+          type: "broadcast",
+          event: "game_events",
+          payload: {
+            events: [{ type: "MATCH_OVER", winner: playerSlot === "player1" ? "AI" : "PLAYER" }],
+            state: { ...match.state, winner: playerSlot === "player1" ? "AI" : "PLAYER", phase: "MATCH_OVER" },
+            turn_deadline: null,
+          },
+        });
+
+        return new Response(
+          JSON.stringify({ ok: true, forfeited: true }),
+          { status: 200, headers: corsHeaders },
+        );
+      }
+    } else {
+      // Player acted on time — reset their AFK counter.
+      const strikeField = playerSlot === "player1" ? "afk_strikes_p1" : "afk_strikes_p2";
+      if ((playerSlot === "player1" ? match.afk_strikes_p1 : match.afk_strikes_p2) > 0) {
+        await supabase.from("matches").update({ [strikeField]: 0 }).eq("id", match_id);
+      }
     }
 
     // --- Run the engine ---

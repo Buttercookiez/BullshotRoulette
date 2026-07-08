@@ -986,6 +986,7 @@ export class Renderer3D implements IRenderer {
     if (!this.playerTurn || this.matchOver || this.roundsRemaining === 0) return;
     this.onInteract();
     this.aiming = !this.aiming;
+    // Default aim is always at the OPPONENT — never at yourself.
     this.aimTarget = this.localParticipant === "PLAYER" ? "AI" : "PLAYER";
     this.firing = false;
     if (this.aiming) this.onGunRaise();
@@ -2191,15 +2192,20 @@ export class Renderer3D implements IRenderer {
           targetRz = a * (Math.PI / 2) + this.gunHoverRot;
         }
       } else if (this.dealerAimT > 0.001) {
-        // Dealer Aiming
+        // Dealer / opponent aiming.
+        // `aiAimingTarget` is the engine ParticipantId that the OPPONENT is shooting AT.
+        // "Aiming at the local player" == aiming at localParticipant.
         const da = this.dealerAimT;
-        if (this.aiAimingTarget === "PLAYER") {
+        const aimingAtLocalPlayer = this.aiAimingTarget === this.localParticipant;
+        if (aimingAtLocalPlayer) {
+          // Opponent aims across the table at US — gun lifts toward camera.
           targetPy += da * 1.6;
           targetPz -= da * 2.2;
           targetRx = da * -0.32 - recoilPitch;
           targetRy = -0.5 + da * (Math.PI + 0.5);
           targetRz = da * (Math.PI / 2);
         } else {
+          // Opponent aims at themselves (self-shot).
           targetPy += da * 2.0;
           targetPz -= da * 1.4;
           targetRx = da * 0.7 + recoilPitch;
@@ -2809,17 +2815,18 @@ export class Renderer3D implements IRenderer {
         ly = 4.5;
         lz = -2.5; // Look up at the dealer
       } else if (this.aiAimingTarget) {
-        if (this.aiAimingTarget === "PLAYER") {
+        // Camera cut: is the opponent aiming at the LOCAL player (us)?
+        if (this.aiAimingTarget === this.localParticipant) {
           by = 9.5;
           bz = -7.5;
           ly = 4.5;
-          lz = 2.5; // Over dealer's shoulder looking at player
+          lz = 2.5; // Over opponent's shoulder looking at local player
         } else {
           by = 8.5;
           bx = 2.0;
           bz = -5.0;
           ly = 4.5;
-          lz = -6.0; // Dealer aiming at self
+          lz = -6.0; // Opponent aiming at self
         }
       }
 
