@@ -226,7 +226,7 @@ function makeGrungeTexture(
 // normals via a Sobel filter. Cached per-variant so memory stays flat.
 // ---------------------------------------------------------------------------
 
-type SurfaceKind = "plaster" | "wood" | "metal" | "fabric" | "leather";
+type SurfaceKind = "plaster" | "wood" | "metal" | "fabric" | "leather" | "checker";
 
 const texCache = new Map<string, THREE.Texture | null>();
 
@@ -284,6 +284,23 @@ function paintHeightField(ctx: CanvasRenderingContext2D, N: number, kind: Surfac
       ctx.beginPath();
       ctx.arc(Math.random() * N, Math.random() * N, 0.6 + Math.random() * 1.8, 0, Math.PI * 2);
       ctx.fill();
+    }
+  } else if (kind === "checker") {
+    // Diamond checkering: 45-degree crossed grooves, like a revolver grip.
+    ctx.fillStyle = "#9a9a9a";
+    ctx.fillRect(0, 0, N, N);
+    ctx.strokeStyle = "rgb(60,60,60)";
+    ctx.lineWidth = 3;
+    const step = 16;
+    for (let d = -N; d < N * 2; d += step) {
+      ctx.beginPath();
+      ctx.moveTo(d, 0);
+      ctx.lineTo(d + N, N);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(d + N, 0);
+      ctx.lineTo(d, N);
+      ctx.stroke();
     }
   } else if (kind === "fabric" || kind === "leather") {
     const step = kind === "fabric" ? 3 : 7;
@@ -575,6 +592,19 @@ export function buildRoom(): THREE.Group {
     halo.position.set(px, 0.008, pz);
     g.add(halo);
   }
+  // A slow ripple ring on the biggest puddle — a drip from the pipes above.
+  // Named so the renderer can find and animate it (scale + fade cycle).
+  const rippleMat = new THREE.MeshBasicMaterial({
+    color: 0x3a4048,
+    transparent: true,
+    opacity: 0.35,
+    side: THREE.DoubleSide,
+  });
+  const ripple = new THREE.Mesh(new THREE.RingGeometry(0.85, 0.95, 24), rippleMat);
+  ripple.name = "puddle-ripple";
+  ripple.rotation.x = -Math.PI / 2;
+  ripple.position.set(7, 0.02, -3); // centre of the pr=3.0 puddle
+  g.add(ripple);
 
   // Stained concrete walls — plaster normal map gives the cinderblock relief.
   const wallMat = dress(matte(PAL.wall, 0.98), "plaster", { repeat: 3, normalScale: 1.0 });
@@ -637,7 +667,7 @@ export function buildRoom(): THREE.Group {
   const ventFrame = new THREE.Mesh(new THREE.BoxGeometry(3.2, 2.2, 0.2), metalMat(0x1a1d20, 0.6));
   ventFrame.position.set(8, 12, -15.85);
   g.add(ventFrame);
-  const ventGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.8), glow(0x9fb7a4, 0.5));
+  const ventGlow = new THREE.Mesh(new THREE.PlaneGeometry(2.8, 1.8), glow(0x7a8f7e, 0.3));
   ventGlow.position.set(8, 12, -15.74);
   g.add(ventGlow);
   const barMat = metalMat(0x0e1012, 0.5);
@@ -647,9 +677,9 @@ export function buildRoom(): THREE.Group {
     g.add(bar);
   }
   const shaftMat = new THREE.MeshBasicMaterial({
-    color: 0xaec7b2,
+    color: 0x84947f,
     transparent: true,
-    opacity: 0.05,
+    opacity: 0.03,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -1110,13 +1140,17 @@ export function buildDealer(): FigureHandles {
   waist.position.y = 3.25;
   torso.add(waist);
 
-  // Thin neck — too long, with visible tendon ridges.
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.26, 0.85, 10), flesh);
-  neck.position.y = 5.7;
+  // Thin neck — too long, craned FORWARD over the table and kinked slightly
+  // sideways, like something once broken that set wrong.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.26, 1.0, 10), flesh);
+  neck.position.set(0.02, 5.72, 0.1);
+  neck.rotation.x = 0.12; // craned slightly toward the player
+  neck.rotation.z = -0.08; // the sideways kink
   torso.add(neck);
   for (const sx of [-1, 1] as const) {
-    const tendon = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.5, 2, 6), flesh);
-    tendon.position.set(sx * 0.12, 5.68, 0.12);
+    const tendon = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.6, 2, 6), flesh);
+    tendon.position.set(sx * 0.12, 5.7, 0.28);
+    tendon.rotation.x = 0.3;
     tendon.rotation.z = sx * -0.12;
     torso.add(tendon);
   }
@@ -1145,7 +1179,12 @@ export function buildDealer(): FigureHandles {
     20,
   );
   head.scale.set(1.05, 1.0, 0.88);
+  // Tilted down off the kinked neck to stare at the table. Kept at the same
+  // anchor so the face features (sockets/grin/teeth placed in torso space)
+  // stay seated on the mask.
   head.position.set(0, 6.55, 0.2);
+  head.rotation.x = 0.1;
+  head.rotation.z = -0.05;
   torso.add(head);
   // Brow shelf shading the sockets.
   const brow = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.14, 0.3), maskMat);
@@ -1249,14 +1288,29 @@ export function buildDealer(): FigureHandles {
   faceLight.position.set(0, 5.9, 1.3);
   torso.add(faceLight);
 
-  // Arms — too long for the body, hanging heavy.
-  const restArm = buildArm(suit, flesh, 1.2);
+  // Bone antler-stubs breaking through the mask crown.
+  const boneMat = matte(0xb8ac96, 0.8);
+  for (const sx of [-1, 1] as const) {
+    const stub = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.5, 6), boneMat);
+    stub.position.set(sx * 0.4, 7.55, 0.1);
+    stub.rotation.z = sx * -0.45;
+    stub.rotation.x = -0.15;
+    torso.add(stub);
+    const tine = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.24, 5), boneMat);
+    tine.position.set(sx * 0.52, 7.6, 0.14);
+    tine.rotation.z = sx * -0.95;
+    torso.add(tine);
+  }
+
+  // Arms — monstrous: too long, clawed, leathery. Same pivots and rest
+  // rotations as before so all renderer arm animations keep working.
+  const restArm = buildMonsterArm(suit, 1.2, true);
   restArm.position.set(0.7, 4.8, 0.4);
   restArm.rotation.x = -1.15;
   restArm.rotation.z = -0.2;
   torso.add(restArm);
 
-  const arm = buildArm(suit, flesh, 1.2);
+  const arm = buildMonsterArm(suit, 1.2, false);
   arm.position.set(-0.7, 4.8, 0.4);
   const armRestX = -1.15;
   arm.rotation.x = armRestX;
@@ -1544,6 +1598,110 @@ function buildArm(
   return arm;
 }
 
+/**
+ * The dealer's monstrous arm: an elongated sleeved limb ending in a leathery
+ * grey-green claw-hand — four triple-jointed fingers roughly twice human
+ * length, each tipped with a curved black talon, plus a splayed thumb-claw.
+ * Same pivot and overall reach direction as buildArm so every existing
+ * renderer arm animation (pickup, point, item use) keeps working.
+ */
+function buildMonsterArm(
+  coat: THREE.MeshStandardMaterial,
+  scale = 1,
+  mirror = false,
+): THREE.Group {
+  const arm = new THREE.Group();
+  const s = scale;
+  const m = mirror ? -1 : 1;
+  // Leathery, drowned-grey monster skin.
+  const hide = dress(matte(0x4a5246, 0.85), "leather", { normalScale: 0.9 });
+  const talon = new THREE.MeshStandardMaterial({ color: 0x0c0c0e, metalness: 0.3, roughness: 0.35 });
+
+  // Shoulder cap under the sleeve.
+  const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.2 * s, 10, 8), coat);
+  arm.add(shoulder);
+  const upper = new THREE.Mesh(new THREE.CapsuleGeometry(0.16 * s, 1.15 * s, 3, 10), coat);
+  upper.position.y = -0.7 * s;
+  arm.add(upper);
+  // Knobbly elbow with a bone spur punching through the sleeve.
+  const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.17 * s, 10, 8), coat);
+  elbow.position.set(0, -1.38 * s, 0.06 * s);
+  arm.add(elbow);
+  const spur = new THREE.Mesh(new THREE.ConeGeometry(0.045 * s, 0.22 * s, 6), hide);
+  spur.position.set(0, -1.44 * s, -0.1 * s);
+  spur.rotation.x = Math.PI + 0.4;
+  arm.add(spur);
+  // Forearm: LONGER than human — the sleeve ends short and bare hide shows.
+  const fore = new THREE.Mesh(new THREE.CapsuleGeometry(0.12 * s, 1.25 * s, 3, 10), coat);
+  fore.position.set(0, -1.68 * s, 0.42 * s);
+  fore.rotation.x = -0.5;
+  arm.add(fore);
+  const bareFore = new THREE.Mesh(new THREE.CapsuleGeometry(0.085 * s, 0.5 * s, 3, 8), hide);
+  bareFore.position.set(0, -2.18 * s, 0.68 * s);
+  bareFore.rotation.x = -0.5;
+  arm.add(bareFore);
+  // Frayed sleeve cuff, riding high on the too-long forearm.
+  const cuff = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.14 * s, 0.17 * s, 0.16 * s, 10, 1, true),
+    coat,
+  );
+  cuff.position.set(0, -1.98 * s, 0.58 * s);
+  cuff.rotation.x = -0.5;
+  arm.add(cuff);
+
+  // Gnarled wrist knuckle-mass + narrow palm.
+  const wrist = new THREE.Mesh(new THREE.SphereGeometry(0.1 * s, 8, 8), hide);
+  wrist.position.set(0, -2.42 * s, 0.8 * s);
+  arm.add(wrist);
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.14 * s, 10, 8), hide);
+  hand.scale.set(1, 0.45, 1.5);
+  hand.position.set(0, -2.5 * s, 0.9 * s);
+  arm.add(hand);
+
+  // Four triple-jointed fingers, ~2x human length, arched so the tips REST
+  // on the felt with the talons digging in.
+  for (let i = 0; i < 4; i++) {
+    const fx = (-0.11 + i * 0.073) * s * m;
+    const stagger = (i % 2) * 0.08;
+    // Segment 1: root, angled down-and-forward off the palm.
+    const seg1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.028 * s, 0.3 * s, 2, 6), hide);
+    seg1.position.set(fx, -2.6 * s, 1.06 * s);
+    seg1.rotation.x = -1.0 - stagger;
+    arm.add(seg1);
+    const kn1 = new THREE.Mesh(new THREE.SphereGeometry(0.036 * s, 6, 6), hide);
+    kn1.position.set(fx, -2.72 * s, 1.18 * s);
+    arm.add(kn1);
+    // Segment 2: arching further out, flatter.
+    const seg2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.024 * s, 0.26 * s, 2, 6), hide);
+    seg2.position.set(fx, -2.82 * s, 1.32 * s);
+    seg2.rotation.x = -1.35 - stagger;
+    arm.add(seg2);
+    const kn2 = new THREE.Mesh(new THREE.SphereGeometry(0.03 * s, 6, 6), hide);
+    kn2.position.set(fx, -2.88 * s, 1.44 * s);
+    arm.add(kn2);
+    // Segment 3: nearly horizontal, pressing into the table.
+    const seg3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.02 * s, 0.2 * s, 2, 6), hide);
+    seg3.position.set(fx, -2.92 * s, 1.56 * s);
+    seg3.rotation.x = -1.5 - stagger * 0.5;
+    arm.add(seg3);
+    // Curved black talon at the tip.
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.022 * s, 0.18 * s, 6), talon);
+    claw.position.set(fx, -2.96 * s, 1.68 * s);
+    claw.rotation.x = -2.1;
+    arm.add(claw);
+  }
+  // Thumb-claw splayed to the inner side.
+  const thumbSeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.03 * s, 0.26 * s, 2, 6), hide);
+  thumbSeg.position.set(0.17 * s * m, -2.56 * s, 0.98 * s);
+  thumbSeg.rotation.set(-1.0, 0, m * -0.85);
+  arm.add(thumbSeg);
+  const thumbClaw = new THREE.Mesh(new THREE.ConeGeometry(0.024 * s, 0.16 * s, 6), talon);
+  thumbClaw.position.set(0.27 * s * m, -2.68 * s, 1.08 * s);
+  thumbClaw.rotation.set(-1.9, 0, m * -0.6);
+  arm.add(thumbClaw);
+  return arm;
+}
+
 // ---------------------------------------------------------------------------
 // The Revolver: a proper top-down six-shooter that lies on the table
 // ---------------------------------------------------------------------------
@@ -1594,8 +1752,8 @@ export function buildRevolver(): RevolverHandles {
   );
   const wood = dress(
     new THREE.MeshStandardMaterial({ color: 0x3a2317, metalness: 0.05, roughness: 0.7 }),
-    "wood",
-    { normalScale: 0.8 },
+    "checker",
+    { normalScale: 1.1, repeat: 2 },
   );
   const brass = metalMat(PAL.brass, 0.4);
   const boreDark = matte(0x060607, 0.6);
@@ -1710,7 +1868,30 @@ export function buildRevolver(): RevolverHandles {
   const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.1, 10), silverHi);
   pin.rotation.x = Math.PI / 2;
   drum.add(pin);
+  // Turn-line: the faint drag ring worn around the cylinder's mid-line by
+  // the bolt stop — the mark of a gun that has been cocked ten thousand times.
+  const turnLine = new THREE.Mesh(
+    new THREE.TorusGeometry(0.362, 0.006, 4, 36),
+    matte(0x17181c, 0.5),
+  );
+  turnLine.position.z = 0.25;
+  drum.add(turnLine);
   group.add(drum);
+
+  // Loading gate: a small disc on the recoil-shield side of the frame.
+  const gate = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.03, 12), silverHi);
+  gate.rotation.z = Math.PI / 2;
+  gate.position.set(0.1, T + 0.005, 0.65);
+  group.add(gate);
+  const gateScrew = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.04, 8), brass);
+  gateScrew.rotation.z = Math.PI / 2;
+  gateScrew.position.set(0.1, T + 0.01, 0.65);
+  group.add(gateScrew);
+
+  // Sight groove: a thin dark channel along the top strap (gun-up = +X side).
+  const groove = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.7), boreDark);
+  groove.position.set(0.52, yc, 0.12);
+  group.add(groove);
 
   // --- Hammer: profiled spur (kept as ONE mesh at the same rest pose) ---
   const hamShape = new THREE.Shape();
@@ -1734,6 +1915,10 @@ export function buildRevolver(): RevolverHandles {
   hamGeo.translate(0, -T * 0.35, 0); // centre thickness on the mesh origin
   const hammer = new THREE.Mesh(hamGeo, silverHi);
   hammer.position.set(0.42, yc, 0.55);
+  // A worn brass thumb-pad on the spur where the bluing rubbed through.
+  const spurPad = new THREE.Mesh(new THREE.BoxGeometry(0.06, T * 0.5, 0.05), brass);
+  spurPad.position.set(0.15, 0, 0.14);
+  hammer.add(spurPad);
   group.add(hammer);
 
   // --- Trigger guard + trigger (ring lies in the X-Z plane) ------------
@@ -1741,7 +1926,7 @@ export function buildRevolver(): RevolverHandles {
   guard.rotation.x = Math.PI / 2;
   guard.position.set(-0.28, yc, 0.5);
   group.add(guard);
-  const trigger = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.02, 0.2, 8), silverHi);
+  const trigger = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.02, 0.2, 8), brass);
   trigger.rotation.z = 0.35;
   trigger.rotation.x = 0.2;
   trigger.position.set(-0.24, yc, 0.48);
@@ -1873,13 +2058,15 @@ export function buildHpMarker(): HpMarker {
   const flame = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.26, 10), glowMat);
   flame.position.y = 0.72;
   group.add(flame);
-  // A faint blue base to the flame.
+  // A faint blue base to the flame — parented to the flame mesh so hiding or
+  // guttering the flame hides the blue too (fixes the floating blue dot on
+  // snuffed candles).
   const flameBase = new THREE.Mesh(
     new THREE.SphereGeometry(0.05, 8, 8),
     glow(0x6fa8ff, 1.2),
   );
-  flameBase.position.y = 0.62;
-  group.add(flameBase);
+  flameBase.position.y = -0.1; // local to flame (0.72 - 0.1 = 0.62 world)
+  flame.add(flameBase);
 
   const light = new THREE.PointLight(0xffa030, 0.5, 2.2, 2);
   light.position.set(0, 0.75, 0);

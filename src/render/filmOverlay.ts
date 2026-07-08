@@ -23,7 +23,7 @@ const CSS = `
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(0, 0, 0, 0.5) 78%, rgba(0, 0, 0, 0.82) 100%);
   /* Red hurt flash + tension vignette, driven by the renderer via CSS vars. */
   box-shadow: inset 0 0 calc(var(--rr-hurt, 0) * 240px) calc(var(--rr-hurt, 0) * 60px) rgba(130, 0, 0, 0.8);
   transition: box-shadow 0.12s linear;

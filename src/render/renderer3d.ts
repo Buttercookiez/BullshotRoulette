@@ -199,6 +199,7 @@ export class Renderer3D implements IRenderer {
   private hallwayLight: THREE.SpotLight | undefined;
   private miniLamp: MiniLamp | undefined;
   private graveflies: Graveflies | undefined;
+  private puddleRipple: THREE.Mesh | undefined;
   private playerHp: HpMarker[] = [];
   private dealerHp: HpMarker[] = [];
   private playerSlots: ItemSlot[] = [];
@@ -420,7 +421,7 @@ export class Renderer3D implements IRenderer {
   private buildScene(): void {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PAL.void);
-    scene.fog = new THREE.FogExp2(PAL.fog, 0.046); // denser — the room edges drown sooner
+    scene.fog = new THREE.FogExp2(PAL.fog, 0.052); // dense — the walls barely read
 
     const camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 100);
     camera.position.copy(this.camPos);
@@ -431,18 +432,18 @@ export class Renderer3D implements IRenderer {
     if (this.renderer) {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      scene.environmentIntensity = 0.12;
+      scene.environmentIntensity = 0.09;
       pmrem.dispose();
     }
 
     // --- Lighting: dim ambient + swinging bulb + a faint camera-side fill --
     // Kept deliberately starved: the bulb is the only thing keeping the dark
     // at bay, and everything outside its pool should feel unsafe.
-    scene.add(new THREE.AmbientLight(0x2c2428, 0.7));
+    scene.add(new THREE.AmbientLight(0x241d20, 0.55));
 
     // A faint, colder fill from the camera so the figures' fronts barely read
     // (no shadow so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xd9c9b0, 0.35);
+    const fill = new THREE.DirectionalLight(0xd9c9b0, 0.22);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
@@ -487,13 +488,14 @@ export class Renderer3D implements IRenderer {
     cord.position.set(0, 13, 0);
     scene.add(cord);
 
-    // A faint cold rim from behind the dealer for separation.
-    const rim = new THREE.DirectionalLight(0x33405a, 0.45);
+    // A faint cold rim from behind the dealer for separation — kept barely
+    // there so it never reads as a blue cast.
+    const rim = new THREE.DirectionalLight(0x2e3442, 0.3);
     rim.position.set(-4, 8, -12);
     scene.add(rim);
 
     // Harsh hallway light outside the cell door casting long bar shadows.
-    const hallwayLight = new THREE.SpotLight(0x8aabc9, 30, 40, Math.PI / 6, 0.5, 2);
+    const hallwayLight = new THREE.SpotLight(0x6f8496, 18, 40, Math.PI / 6, 0.5, 2);
     hallwayLight.position.set(-25, 6, -2);
     hallwayLight.target.position.set(0, 4, -2);
     scene.add(hallwayLight.target);
@@ -520,7 +522,9 @@ export class Renderer3D implements IRenderer {
     this.graveflies = flies;
 
     // --- World -----------------------------------------------------------
-    scene.add(buildRoom());
+    const room = buildRoom();
+    scene.add(room);
+    this.puddleRipple = room.getObjectByName("puddle-ripple") as THREE.Mesh | undefined;
     scene.add(buildTable());
 
     // --- Figures ---------------------------------------------------------
@@ -2014,8 +2018,22 @@ export class Renderer3D implements IRenderer {
           raise = q < 0.2 ? q / 0.2 : q > 0.85 ? (1 - q) / 0.15 : 1;
         }
         const scratch = raise * Math.sin(t * 21) * 0.14;
-        this.dealer.restArm.rotation.x = -1.15 - raise * 1.35 + scratch;
-        this.dealer.restArm.rotation.z = -0.2 - raise * 0.5 + scratch * 0.5;
+        // When not scratching, the claws slow-drum on the felt: a staggered
+        // micro-oscillation rolling through the resting hand.
+        const drum = (1 - raise) * Math.sin(t * 5.2) * Math.max(0, Math.sin(t * 0.7)) * 0.045;
+        this.dealer.restArm.rotation.x = -1.15 - raise * 1.35 + scratch + drum;
+        this.dealer.restArm.rotation.z = -0.2 - raise * 0.5 + scratch * 0.5 + drum * 0.4;
+      }
+      // Slow lean-in: every ~25s the dealer creeps toward the player over a
+      // few seconds, holds, then snaps back upright in an instant.
+      const leanCycle = t % 25;
+      if (leanCycle > 19 && leanCycle < 24) {
+        const q = (leanCycle - 19) / 5;
+        const lean = q < 0.6 ? q / 0.6 : q > 0.96 ? 0 : 1; // creep, hold, snap back
+        this.dealer.torso.position.z = lean * 0.9;
+        this.dealer.torso.rotation.x += lean * 0.1;
+      } else {
+        this.dealer.torso.position.z = 0;
       }
     }
     if (this.player) {
@@ -2324,6 +2342,14 @@ export class Renderer3D implements IRenderer {
     }
 
     // --- Graveflies swarm + blink under the lamp ------------------------
+    // A drip hits the big puddle every ~4s: the ring expands and fades.
+    if (this.puddleRipple) {
+      const q = (t % 4.2) / 4.2;
+      const sc = 0.15 + q * 1.1;
+      this.puddleRipple.scale.set(sc, sc, 1);
+      (this.puddleRipple.material as THREE.MeshBasicMaterial).opacity =
+        q < 0.08 ? (q / 0.08) * 0.35 : 0.35 * (1 - (q - 0.08) / 0.92);
+    }
     if (this.graveflies) {
       for (const f of this.graveflies.flies) {
         const a = t * f.speed + f.phase;
