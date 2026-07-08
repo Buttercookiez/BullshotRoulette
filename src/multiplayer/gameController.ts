@@ -41,6 +41,8 @@ export interface MultiplayerControllerOptions {
   onMatchOver: (youWon: boolean) => void;
   /** Fired each second with the active turn's remaining time. */
   onTimerTick: (secondsLeft: number) => void;
+  /** Fired when the opponent sends a chat message. */
+  onChat?: (text: string) => void;
 }
 
 export class MultiplayerGameController implements PresentationController {
@@ -81,7 +83,13 @@ export class MultiplayerGameController implements PresentationController {
 
       onTimerTick: opts.onTimerTick,
       onMatchOver: opts.onMatchOver,
+      onChat: opts.onChat,
     });
+  }
+
+  /** Send a chat message to the opponent. */
+  sendChat(text: string): void {
+    this.client.sendChat(text);
   }
 
   /** Join the queue and start matchmaking. */

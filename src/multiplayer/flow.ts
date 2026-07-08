@@ -43,6 +43,60 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
     "z-index:9999;pointer-events:none;opacity:0;transition:opacity 0.3s;";
   document.body.appendChild(timerEl);
 
+  // --- Chat box (bottom-left): minimalist horror styling ------------------
+  const chatEl = document.createElement("div");
+  chatEl.style.cssText =
+    "position:fixed;bottom:20px;left:20px;width:300px;z-index:9998;display:none;" +
+    "flex-direction:column;gap:6px;font-family:'Courier New',monospace;";
+  const chatLog = document.createElement("div");
+  chatLog.style.cssText =
+    "max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;" +
+    "padding:8px;background:rgba(5,4,5,0.82);border:1px solid #1e1a18;" +
+    "border-left:2px solid #4a1010;scrollbar-width:thin;";
+  const chatInput = document.createElement("input");
+  chatInput.type = "text";
+  chatInput.maxLength = 200;
+  chatInput.placeholder = "say something...";
+  chatInput.setAttribute("aria-label", "Chat message");
+  chatInput.style.cssText =
+    "background:rgba(5,4,5,0.82);border:1px solid #1e1a18;color:#b8b0a0;" +
+    "font-family:'Courier New',monospace;font-size:12px;letter-spacing:1px;" +
+    "padding:8px 10px;outline:none;";
+  chatInput.addEventListener("focus", () => (chatInput.style.borderColor = "#4a1010"));
+  chatInput.addEventListener("blur", () => (chatInput.style.borderColor = "#1e1a18"));
+  chatEl.appendChild(chatLog);
+  chatEl.appendChild(chatInput);
+  document.body.appendChild(chatEl);
+
+  const pushChatLine = (who: "YOU" | "THEM", text: string): void => {
+    const line = document.createElement("div");
+    line.style.cssText =
+      "font-size:12px;line-height:1.5;letter-spacing:0.5px;word-break:break-word;" +
+      (who === "YOU" ? "color:#8a8276;" : "color:#c02020;");
+    const tag = document.createElement("span");
+    tag.style.cssText = "font-weight:700;margin-right:6px;opacity:0.7;";
+    tag.textContent = who === "YOU" ? "YOU" : "THEM";
+    line.appendChild(tag);
+    line.appendChild(document.createTextNode(text));
+    chatLog.appendChild(line);
+    // Cap the log at 40 lines, keep scrolled to the newest.
+    while (chatLog.childNodes.length > 40) chatLog.removeChild(chatLog.firstChild!);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  };
+
+  chatInput.addEventListener("keydown", (e) => {
+    // Don't let gameplay hotkeys fire while typing.
+    e.stopPropagation();
+    if (e.key !== "Enter") return;
+    // CJK IME-safe: Enter may just confirm composition (229 = Safari quirk).
+    if (e.isComposing || e.keyCode === 229) return;
+    const text = chatInput.value.trim();
+    if (!text) return;
+    controller.sendChat(text);
+    pushChatLine("YOU", text);
+    chatInput.value = "";
+  });
+
   const controller = new MultiplayerGameController({
     playerId,
 
@@ -84,7 +138,13 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       // Reveal the board (emits initial state + ROUND_SET_LOADED events).
       matchStarted = true;
       controller.beginMatch();
+      chatEl.style.display = "flex"; // chat opens once the duel begins
       onMatchStart();
+    },
+
+    onChat: (text) => {
+      if (cancelled) return;
+      pushChatLine("THEM", text);
     },
 
     onMatchOver: (youWon) => {
@@ -119,6 +179,7 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       cancelled = true;
       controller.dispose();
       if (timerEl.parentNode) timerEl.parentNode.removeChild(timerEl);
+      if (chatEl.parentNode) chatEl.parentNode.removeChild(chatEl);
     },
     submitAction: (action: Action) => {
       if (!matchStarted || cancelled) return;

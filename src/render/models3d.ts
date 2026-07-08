@@ -1692,24 +1692,24 @@ export function buildRevolver(): RevolverHandles {
   // profile is drawn in the X-Z plane (length along Z, "up of the gun" along
   // +X) and is thin along Y, so it rests flat on the felt with no clipping.
   const group = new THREE.Group();
-  // Worn blued steel: a near-black body whose edges catch the light where
-  // decades of handling have rubbed the bluing away.
+  // Rust-eaten steel (per the reference props): a brown-black body whose
+  // patina is pitted and mottled, edges rubbed to a dull shine.
   const silver = dress(
-    new THREE.MeshStandardMaterial({ color: 0x2e3138, metalness: 0.9, roughness: 0.35 }),
+    new THREE.MeshStandardMaterial({ color: 0x2c2622, metalness: 0.8, roughness: 0.5 }),
     "metal",
-    { normalScale: 0.35 },
+    { normalScale: 0.9 },
   );
   const silverHi = dress(
-    new THREE.MeshStandardMaterial({ color: 0x4c515c, metalness: 0.85, roughness: 0.25 }),
+    new THREE.MeshStandardMaterial({ color: 0x4a4038, metalness: 0.75, roughness: 0.4 }),
     "metal",
-    { normalScale: 0.3 },
+    { normalScale: 0.7 },
   );
   const wood = dress(
-    new THREE.MeshStandardMaterial({ color: 0x3a2317, metalness: 0.05, roughness: 0.7 }),
+    new THREE.MeshStandardMaterial({ color: 0x2e1a10, metalness: 0.05, roughness: 0.75 }),
     "checker",
     { normalScale: 1.1, repeat: 2 },
   );
-  const brass = metalMat(PAL.brass, 0.4);
+  const brass = metalMat(0x8a6f42, 0.45); // tarnished brass
   const boreDark = matte(0x060607, 0.6);
 
   const T = 0.36; // thickness in Y (how thick the gun is as it lies on its side)
@@ -1916,6 +1916,40 @@ export function buildRevolver(): RevolverHandles {
   const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, T + 0.02, 10), brass);
   screw.position.set(-0.55, yc, 0.95);
   group.add(screw);
+
+  // --- Grime pass: rust blooms and dried blood (per the reference props) --
+  const rustBloom = matte(0x4e2c18, 0.85);
+  for (const [rx, rz, rr] of [
+    [0.2, -1.1, 0.09],
+    [-0.05, -1.7, 0.07],
+    [0.3, 0.35, 0.08],
+    [-0.2, 0.1, 0.06],
+  ] as const) {
+    const bloom = new THREE.Mesh(new THREE.SphereGeometry(rr, 8, 6), rustBloom);
+    bloom.scale.set(1.6, 0.25, 1.2); // flat mottled patch on the up-facing side
+    bloom.position.set(rx, T + 0.01, rz);
+    group.add(bloom);
+  }
+  // Dried blood smeared across the frame and grip butt.
+  const bloodSmear = matte(0x3d0f0a, 0.7);
+  const smear1 = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), bloodSmear);
+  smear1.scale.set(2.0, 0.2, 1.1);
+  smear1.position.set(0.05, T + 0.012, 0.75);
+  smear1.rotation.y = 0.5;
+  group.add(smear1);
+  const smear2 = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), bloodSmear);
+  smear2.scale.set(1.6, 0.2, 1);
+  smear2.position.set(-0.75, T - 0.05, 1.15);
+  smear2.rotation.y = 0.7;
+  group.add(smear2);
+  // Grip medallion: a small tarnished-brass eye disc set into the wood.
+  const medallion = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.02, 12), brass);
+  medallion.position.set(-0.62, T - 0.03, 1.0);
+  group.add(medallion);
+  const medEye = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.006, 6, 10), matte(0x2a1008, 0.7));
+  medEye.rotation.x = Math.PI / 2;
+  medEye.position.set(-0.62, T - 0.015, 1.0);
+  group.add(medEye);
 
   // Muzzle flash (hidden until fired).
   const flash = new THREE.PointLight(PAL.ember, 0, 9, 2);
