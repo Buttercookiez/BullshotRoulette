@@ -222,6 +222,284 @@ function makeGrungeTexture(
 }
 
 // ---------------------------------------------------------------------------
+// Procedural normal / roughness maps — canvas height-field converted to
+// normals via a Sobel filter. Cached per-variant so memory stays flat.
+// ---------------------------------------------------------------------------
+
+type SurfaceKind = "plaster" | "wood" | "metal" | "fabric" | "leather";
+
+const texCache = new Map<string, THREE.Texture | null>();
+
+function cachedTex(key: string, make: () => THREE.Texture | null): THREE.Texture | null {
+  if (!texCache.has(key)) texCache.set(key, make());
+  return texCache.get(key) ?? null;
+}
+
+/** Paint a grayscale height-field for a surface kind. */
+function paintHeightField(ctx: CanvasRenderingContext2D, N: number, kind: SurfaceKind): void {
+  ctx.fillStyle = "#808080";
+  ctx.fillRect(0, 0, N, N);
+
+  if (kind === "wood") {
+    // Long horizontal grain streaks with occasional knots.
+    for (let i = 0; i < 240; i++) {
+      const y = Math.random() * N;
+      const w = 40 + Math.random() * (N - 40);
+      const x = Math.random() * (N - w);
+      const l = 108 + Math.floor(Math.random() * 40);
+      ctx.strokeStyle = `rgb(${l},${l},${l})`;
+      ctx.lineWidth = 0.5 + Math.random() * 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.bezierCurveTo(x + w * 0.3, y + (Math.random() - 0.5) * 8, x + w * 0.7, y + (Math.random() - 0.5) * 8, x + w, y);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 5; i++) {
+      const x = Math.random() * N;
+      const y = Math.random() * N;
+      for (let r = 2; r < 16; r += 2.5) {
+        const l = 96 + Math.floor(Math.random() * 48);
+        ctx.strokeStyle = `rgb(${l},${l},${l})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(x, y, r * 1.7, r, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  } else if (kind === "metal") {
+    // Brushed streaks + pits.
+    for (let i = 0; i < 500; i++) {
+      const y = Math.random() * N;
+      const l = 118 + Math.floor(Math.random() * 22);
+      ctx.strokeStyle = `rgba(${l},${l},${l},0.5)`;
+      ctx.lineWidth = 0.5 + Math.random();
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(N, y + (Math.random() - 0.5) * 4);
+      ctx.stroke();
+    }
+    for (let i = 0; i < 260; i++) {
+      const l = 70 + Math.floor(Math.random() * 40);
+      ctx.fillStyle = `rgb(${l},${l},${l})`;
+      ctx.beginPath();
+      ctx.arc(Math.random() * N, Math.random() * N, 0.6 + Math.random() * 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (kind === "fabric" || kind === "leather") {
+    const step = kind === "fabric" ? 3 : 7;
+    for (let y = 0; y < N; y += step) {
+      for (let x = 0; x < N; x += step) {
+        const l = 116 + Math.floor(Math.random() * 26);
+        ctx.fillStyle = `rgb(${l},${l},${l})`;
+        ctx.fillRect(x + (Math.random() - 0.5) * 2, y + (Math.random() - 0.5) * 2, step - 1, step - 1);
+      }
+    }
+    if (kind === "leather") {
+      // Creases.
+      for (let i = 0; i < 60; i++) {
+        ctx.strokeStyle = "rgba(80,80,80,0.6)";
+        ctx.lineWidth = 1;
+        const x = Math.random() * N;
+        const y = Math.random() * N;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + (Math.random() - 0.5) * 60, y + (Math.random() - 0.5) * 60);
+        ctx.stroke();
+      }
+    }
+  } else {
+    // Plaster: blotchy low-frequency lumps + fine noise.
+    for (let i = 0; i < 140; i++) {
+      const x = Math.random() * N;
+      const y = Math.random() * N;
+      const r = 8 + Math.random() * 46;
+      const l = 108 + Math.floor(Math.random() * 40);
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, `rgba(${l},${l},${l},0.55)`);
+      g.addColorStop(1, "rgba(128,128,128,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 4000; i++) {
+      const l = 100 + Math.floor(Math.random() * 56);
+      ctx.fillStyle = `rgba(${l},${l},${l},0.35)`;
+      ctx.fillRect(Math.random() * N, Math.random() * N, 1.5, 1.5);
+    }
+  }
+}
+
+/**
+ * Generate a tiling normal map for a surface kind (Sobel over a canvas
+ * height-field). Returns null without a DOM.
+ */
+function makeNormalMap(kind: SurfaceKind, strength = 1): THREE.Texture | null {
+  return cachedTex(`nrm:${kind}:${strength}`, () => {
+    if (typeof document === "undefined") return null;
+    try {
+      const N = 256;
+      const src = document.createElement("canvas");
+      src.width = N;
+      src.height = N;
+      const sctx = src.getContext("2d");
+      if (!sctx) return null;
+      paintHeightField(sctx, N, kind);
+      const data = sctx.getImageData(0, 0, N, N).data;
+      const h = (x: number, y: number): number => {
+        const xi = ((x % N) + N) % N;
+        const yi = ((y % N) + N) % N;
+        return data[(yi * N + xi) * 4] / 255;
+      };
+
+      const out = document.createElement("canvas");
+      out.width = N;
+      out.height = N;
+      const octx = out.getContext("2d");
+      if (!octx) return null;
+      const img = octx.createImageData(N, N);
+      for (let y = 0; y < N; y++) {
+        for (let x = 0; x < N; x++) {
+          const dx = (h(x + 1, y) - h(x - 1, y)) * strength;
+          const dy = (h(x, y + 1) - h(x, y - 1)) * strength;
+          const inv = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+          const i = (y * N + x) * 4;
+          img.data[i] = Math.round(((-dx * inv) * 0.5 + 0.5) * 255);
+          img.data[i + 1] = Math.round(((-dy * inv) * 0.5 + 0.5) * 255);
+          img.data[i + 2] = Math.round((inv * 0.5 + 0.5) * 255);
+          img.data[i + 3] = 255;
+        }
+      }
+      octx.putImageData(img, 0, 0);
+      const tex = new THREE.CanvasTexture(out);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      tex.anisotropy = 4;
+      return tex;
+    } catch {
+      return null;
+    }
+  });
+}
+
+/** A matching tiling roughness-variation map (subtle worn/polished patches). */
+function makeRoughnessMap(kind: SurfaceKind): THREE.Texture | null {
+  return cachedTex(`rgh:${kind}`, () => {
+    if (typeof document === "undefined") return null;
+    try {
+      const N = 256;
+      const c = document.createElement("canvas");
+      c.width = N;
+      c.height = N;
+      const ctx = c.getContext("2d");
+      if (!ctx) return null;
+      ctx.fillStyle = "#b4b4b4";
+      ctx.fillRect(0, 0, N, N);
+      for (let i = 0; i < 60; i++) {
+        const x = Math.random() * N;
+        const y = Math.random() * N;
+        const r = 12 + Math.random() * 50;
+        const dark = Math.random() < 0.5;
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, dark ? "rgba(70,70,70,0.5)" : "rgba(230,230,230,0.4)");
+        g.addColorStop(1, "rgba(180,180,180,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      const tex = new THREE.CanvasTexture(c);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.RepeatWrapping;
+      return tex;
+    } catch {
+      return null;
+    }
+  });
+}
+
+/**
+ * Dress a MeshStandardMaterial with cached normal + roughness maps.
+ * Mutates and returns the material for chaining.
+ */
+function dress(
+  mat: THREE.MeshStandardMaterial,
+  kind: SurfaceKind,
+  opts: { repeat?: number; normalScale?: number } = {},
+): THREE.MeshStandardMaterial {
+  const nrm = makeNormalMap(kind);
+  const rgh = makeRoughnessMap(kind);
+  const rep = opts.repeat ?? 1;
+  if (nrm) {
+    mat.normalMap = nrm;
+    mat.normalScale = new THREE.Vector2(opts.normalScale ?? 0.6, opts.normalScale ?? 0.6);
+    if (rep !== 1) {
+      mat.normalMap = nrm.clone();
+      mat.normalMap.needsUpdate = true;
+      mat.normalMap.repeat.set(rep, rep);
+    }
+  }
+  if (rgh) {
+    mat.roughnessMap = rgh;
+    if (rep !== 1) {
+      mat.roughnessMap = rgh.clone();
+      mat.roughnessMap.needsUpdate = true;
+      mat.roughnessMap.repeat.set(rep, rep);
+    }
+  }
+  return mat;
+}
+
+// ---------------------------------------------------------------------------
+// Geometry sugar
+// ---------------------------------------------------------------------------
+
+/** LatheGeometry from [radius, y] pairs (bottom → top). */
+function lathe(
+  profile: ReadonlyArray<readonly [number, number]>,
+  mat: THREE.Material,
+  segments = 24,
+): THREE.Mesh {
+  const pts = profile.map(([r, y]) => new THREE.Vector2(Math.max(r, 0.0001), y));
+  return new THREE.Mesh(new THREE.LatheGeometry(pts, segments), mat);
+}
+
+/** An extruded 2D Shape with a small bevel — crisper than raw boxes. */
+function extruded(
+  shape: THREE.Shape,
+  depth: number,
+  mat: THREE.Material,
+  bevel = 0.02,
+): THREE.Mesh {
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth,
+    bevelEnabled: bevel > 0,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 2,
+    curveSegments: 12,
+  });
+  return new THREE.Mesh(geo, mat);
+}
+
+/** Rounded-rectangle Shape helper (centred at origin). */
+function roundedRectShape(w: number, h: number, r: number): THREE.Shape {
+  const s = new THREE.Shape();
+  const x = -w / 2;
+  const y = -h / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+// ---------------------------------------------------------------------------
 // Room: an industrial back-room — stained concrete, corrugated panels, exposed
 // pipes, a barred vent leaking cold light, wet floor patches. The fog still
 // swallows the edges; the room should read as oppressive, not decorated.
@@ -231,7 +509,7 @@ export function buildRoom(): THREE.Group {
   const g = new THREE.Group();
 
   // Wet concrete floor: dark, stained, with a faint sheen so the bulb reads.
-  const floorMat = matte(PAL.floor, 0.6, 0.08);
+  const floorMat = dress(matte(PAL.floor, 0.6, 0.08), "plaster", { repeat: 4, normalScale: 0.8 });
   const floorTex = makeGrungeTexture(PAL.floor, { blood: true, scratches: 60, grime: 9000 });
   if (floorTex) {
     floorTex.repeat.set(4, 4);
@@ -263,8 +541,8 @@ export function buildRoom(): THREE.Group {
     g.add(puddle);
   }
 
-  // Stained concrete walls.
-  const wallMat = matte(PAL.wall, 0.98);
+  // Stained concrete walls — plaster normal map gives the cinderblock relief.
+  const wallMat = dress(matte(PAL.wall, 0.98), "plaster", { repeat: 3, normalScale: 1.0 });
   const wallTex = makeGrungeTexture(PAL.wall, { scratches: 30, grime: 8000, cinderblock: true, tallyMarks: true });
   if (wallTex) {
     wallTex.repeat.set(3, 2);
@@ -397,11 +675,47 @@ export function buildRoom(): THREE.Group {
   frameMesh.position.set(0, 2, 0);
   cotGroup.add(frameMesh);
   
-  const mattress = new THREE.Mesh(new THREE.BoxGeometry(8, 0.6, 4), mattressMat);
-  mattress.position.set(0, 2.4, 0);
+  // Sagging mattress: a squashed rounded slab, with a crumpled blanket fold.
+  const mattressGeo = new THREE.ExtrudeGeometry(roundedRectShape(8, 4, 0.5), {
+    depth: 0.4,
+    bevelEnabled: true,
+    bevelThickness: 0.12,
+    bevelSize: 0.12,
+    bevelSegments: 2,
+    curveSegments: 8,
+  });
+  mattressGeo.rotateX(-Math.PI / 2);
+  const mattress = new THREE.Mesh(mattressGeo, dress(mattressMat, "fabric", { normalScale: 0.8 }));
+  mattress.position.set(0, 2.62, 0);
   cotGroup.add(mattress);
+  const blanket = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.45, 3.0, 4, 10),
+    dress(matte(0x1e2420, 0.95), "fabric", { normalScale: 0.9 }),
+  );
+  blanket.scale.set(1, 0.5, 1);
+  blanket.rotation.z = Math.PI / 2;
+  blanket.rotation.y = 0.08;
+  blanket.position.set(-1.2, 2.85, 0.4);
+  cotGroup.add(blanket);
   castReceive(cotGroup, true, true);
   g.add(cotGroup);
+
+  // Ceiling: a stained slab with exposed rusted I-beams so looking up during
+  // the bulb swing doesn't reveal an empty void.
+  const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(60, 40), wallMat);
+  ceiling.rotation.x = Math.PI / 2;
+  ceiling.position.set(0, 15.5, 0);
+  ceiling.receiveShadow = true;
+  g.add(ceiling);
+  const beamMat = dress(metalMat(0x241f1a, 0.7), "metal", { normalScale: 0.5 });
+  for (const bx of [-14, -5, 4, 13] as const) {
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 36), beamMat);
+    beam.position.set(bx, 15.1, 0);
+    g.add(beam);
+    const flange = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.12, 36), beamMat);
+    flange.position.set(bx, 14.72, 0);
+    g.add(flange);
+  }
 
   // 3. Wall chains hanging from the back wall
   const chainMat = metalMat(0x151515, 0.5);
@@ -431,22 +745,58 @@ export function buildRoom(): THREE.Group {
   toiletGroup.position.set(-18, 0, -12);
   toiletGroup.rotation.y = Math.PI / 2;
   
-  const steelRustMat = metalMat(0x3a3a40, 0.45); // dull, rusted stainless steel
-  const porcelainMat = matte(0x80807a, 0.8); // gross discolored porcelain
+  const steelRustMat = dress(metalMat(0x3a3a40, 0.45), "metal", { normalScale: 0.5 }); // dull, rusted stainless steel
+  const porcelainMat = dress(matte(0x80807a, 0.75), "plaster", { normalScale: 0.4 }); // gross discolored porcelain
 
-  // Sink base / stand
-  const toiletBase = new THREE.Mesh(new THREE.BoxGeometry(2.4, 4, 2), steelRustMat);
-  toiletBase.position.y = 2;
+  // Sink base / stand — a rounded steel column instead of a raw box.
+  const baseGeoT = new THREE.ExtrudeGeometry(roundedRectShape(2.4, 2, 0.2), {
+    depth: 3.9,
+    bevelEnabled: true,
+    bevelThickness: 0.05,
+    bevelSize: 0.05,
+    bevelSegments: 2,
+    curveSegments: 8,
+  });
+  baseGeoT.rotateX(-Math.PI / 2);
+  const toiletBase = new THREE.Mesh(baseGeoT, steelRustMat);
+  toiletBase.position.y = 3.95;
   toiletGroup.add(toiletBase);
 
-  // Toilet bowl
-  const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.6, 1.2, 12), porcelainMat);
-  bowl.position.set(0, 1.2, 1.4);
+  // Toilet bowl: lathed with a rolled rim and dark hollow.
+  const bowl = lathe(
+    [
+      [0.35, 0.0],
+      [0.5, 0.25],
+      [0.68, 0.7],
+      [0.8, 1.05],
+      [0.84, 1.18], // rolled rim out
+      [0.72, 1.2], // rim top rolling inward
+      [0.55, 1.1],
+    ],
+    porcelainMat,
+    18,
+  );
+  bowl.position.set(0, 0.6, 1.4);
   toiletGroup.add(bowl);
-  
-  // Sink basin on top
-  const basin = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 0.4, 12), steelRustMat);
-  basin.position.set(0, 4.2, 0.4);
+  const bowlHole = new THREE.Mesh(new THREE.CircleGeometry(0.5, 14), matte(0x0a0a0c, 0.6));
+  bowlHole.rotation.x = -Math.PI / 2;
+  bowlHole.position.set(0, 1.72, 1.4);
+  toiletGroup.add(bowlHole);
+
+  // Sink basin on top: lathed dish.
+  const basin = lathe(
+    [
+      [0.3, 0.0],
+      [0.72, 0.1],
+      [0.9, 0.32],
+      [0.94, 0.4],
+      [0.8, 0.42],
+      [0.55, 0.2],
+    ],
+    steelRustMat,
+    16,
+  );
+  basin.position.set(0, 4.0, 0.4);
   toiletGroup.add(basin);
 
   // Faucet
@@ -503,23 +853,33 @@ export const SURFACE_Y = TABLE.topY + TABLE.thickness / 2;
 export function buildTable(): THREE.Group {
   const g = new THREE.Group();
   // Industrial slab: scratched gunmetal top on welded steel legs.
-  const steelTop = metalMat(0x2c2f34, 0.6);
-  const steelLeg = metalMat(0x1e2126, 0.65);
+  const steelTop = dress(metalMat(0x2c2f34, 0.6), "metal", { normalScale: 0.5 });
+  const steelLeg = dress(metalMat(0x1e2126, 0.65), "metal", { normalScale: 0.4 });
 
   // Worn, gouged metal (procedural grunge textures).
   const topTex = makeGrungeTexture(0x2c2f34, { scratches: 130, grime: 9000 });
   if (topTex) steelTop.map = topTex;
 
-  const top = new THREE.Mesh(
-    new THREE.BoxGeometry(TABLE.width, TABLE.thickness, TABLE.depth),
-    steelTop,
+  // Bevelled slab top (rounded corners + chamfered edge) instead of a box.
+  const topGeo = new THREE.ExtrudeGeometry(
+    roundedRectShape(TABLE.width, TABLE.depth, 0.25),
+    {
+      depth: TABLE.thickness - 0.08,
+      bevelEnabled: true,
+      bevelThickness: 0.04,
+      bevelSize: 0.04,
+      bevelSegments: 2,
+      curveSegments: 8,
+    },
   );
-  top.position.y = TABLE.topY;
+  topGeo.rotateX(-Math.PI / 2);
+  const top = new THREE.Mesh(topGeo, steelTop);
+  top.position.y = TABLE.topY + TABLE.thickness / 2 - 0.04;
   g.add(top);
 
   // A darker brushed-metal playing surface inset into the top — blood-stained
   // and burned where past games ended badly.
-  const feltMat = metalMat(0x1c1e22, 0.75);
+  const feltMat = dress(metalMat(0x1c1e22, 0.75), "metal", { normalScale: 0.35 });
   const feltTex = makeGrungeTexture(0x1c1e22, { blood: true, scratches: 90, grime: 8000 });
   if (feltTex) feltMat.map = feltTex;
   const felt = new THREE.Mesh(
@@ -646,46 +1006,118 @@ export function buildDealer(): FigureHandles {
   const group = new THREE.Group();
   const torso = new THREE.Group();
 
-  const suit = matte(0x08080a, 0.9); // pit-black suit
+  const suit = dress(matte(0x08080a, 0.9), "fabric", { normalScale: 0.5 }); // pit-black suit
   const flesh = matte(0xd8d4c8, 0.55); // drained, bloodless skin
 
-  // Tall, thin body — unnervingly narrow
-  const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 4.2, 10), suit);
-  lower.position.y = 2.1;
+  // Tall, thin lower body — a lathed robe that flares slightly at the hem.
+  const lower = lathe(
+    [
+      [1.05, 0.0],
+      [0.92, 0.4],
+      [0.8, 1.6],
+      [0.72, 2.8],
+      [0.68, 4.2],
+    ],
+    suit,
+    14,
+  );
   group.add(lower);
+  // Ragged hem strips around the base of the robe.
+  for (let i = 0; i < 9; i++) {
+    const a = (i / 9) * Math.PI * 2 + 0.2;
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.5 + (i % 3) * 0.2, 0.04), suit);
+    strip.position.set(Math.cos(a) * 0.98, 0.22 + (i % 3) * 0.06, Math.sin(a) * 0.98);
+    strip.rotation.y = -a + Math.PI / 2;
+    strip.rotation.x = (i % 2 === 0 ? 1 : -1) * 0.08;
+    group.add(strip);
+  }
 
-  // Narrow gaunt torso — angular, boxy silhouette (like a suit jacket on bones)
-  const chest = new THREE.Mesh(new THREE.BoxGeometry(1.4, 2.4, 0.8), suit);
+  // Gaunt torso: a tapered capsule ribcage under the jacket, with sharp
+  // shoulder pads and hanging lapels.
+  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.62, 1.5, 4, 12), suit);
+  chest.scale.set(1.1, 1, 0.62);
   chest.position.y = 4.4;
   torso.add(chest);
-  // Slight taper at the waist
-  const waist = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.6, 0.7), suit);
-  waist.position.y = 3.1;
+  const shoulderPadGeo = new THREE.SphereGeometry(0.32, 10, 8);
+  for (const sx of [-1, 1] as const) {
+    const pad = new THREE.Mesh(shoulderPadGeo, suit);
+    pad.scale.set(1.25, 0.62, 0.9);
+    pad.position.set(sx * 0.62, 5.25, 0.05);
+    torso.add(pad);
+  }
+  // Lapels: two thin angled slabs meeting at the sternum.
+  for (const sx of [-1, 1] as const) {
+    const lapel = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.15, 0.05), matte(0x0c0c10, 0.85));
+    lapel.position.set(sx * 0.24, 4.6, 0.42);
+    lapel.rotation.z = sx * -0.32;
+    lapel.rotation.y = sx * 0.18;
+    torso.add(lapel);
+  }
+  // Waist cinch.
+  const waist = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.62, 0.7, 12), suit);
+  waist.position.y = 3.25;
   torso.add(waist);
 
-  // Thin neck — too long
-  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.25, 0.8, 10), flesh);
+  // Thin neck — too long, with visible tendon ridges.
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.26, 0.85, 10), flesh);
   neck.position.y = 5.7;
   torso.add(neck);
+  for (const sx of [-1, 1] as const) {
+    const tendon = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 0.5, 2, 6), flesh);
+    tendon.position.set(sx * 0.12, 5.68, 0.12);
+    tendon.rotation.z = sx * -0.12;
+    torso.add(tendon);
+  }
 
-  // The Head: creepy white mask, wide face
-  const maskMat = new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.9, metalness: 0.1 });
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.8, 24, 24), maskMat);
-  head.scale.set(1.1, 1.2, 1.0);
-  head.position.set(0, 6.5, 0.2);
+  // The Head: a lathed porcelain mask — chin, hollow cheeks, brow ridge —
+  // rather than a scaled sphere. Rotationally shaped, then squashed slightly
+  // front-to-back so the face plane reads under the light.
+  const maskMat = dress(
+    new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.85, metalness: 0.05 }),
+    "plaster",
+    { normalScale: 0.35 },
+  );
+  const head = lathe(
+    [
+      [0.0, -0.85], // chin point
+      [0.3, -0.75], // jaw
+      [0.5, -0.5], // hollow cheek
+      [0.62, -0.15],
+      [0.72, 0.2], // cheekbone / brow swell
+      [0.78, 0.45], // brow ridge
+      [0.72, 0.7],
+      [0.5, 0.9],
+      [0.0, 1.0], // crown
+    ],
+    maskMat,
+    20,
+  );
+  head.scale.set(1.05, 1.0, 0.88);
+  head.position.set(0, 6.55, 0.2);
   torso.add(head);
+  // Brow shelf shading the sockets.
+  const brow = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.14, 0.3), maskMat);
+  brow.position.set(0, 6.92, 0.78);
+  brow.rotation.x = 0.25;
+  torso.add(brow);
 
-  // Hollow dark eye sockets
+  // Hollow dark eye sockets — recessed hemispheres under the brow.
   const socketMat = matte(0x050505, 0.9);
   const eyeMat = glow(0xd8ffe4, 0.4);
-  const socketGeo = new THREE.BoxGeometry(0.4, 0.3, 0.2);
+  const socketGeo = new THREE.SphereGeometry(0.19, 12, 10);
   const skL = new THREE.Mesh(socketGeo, socketMat);
-  skL.position.set(-0.35, 6.7, 0.9);
-  skL.rotation.y = -0.1;
+  skL.scale.set(1.2, 0.85, 0.6);
+  skL.position.set(-0.32, 6.7, 0.88);
   const skR = new THREE.Mesh(socketGeo, socketMat);
-  skR.position.set(0.35, 6.7, 0.9);
-  skR.rotation.y = 0.1;
+  skR.scale.set(1.2, 0.85, 0.6);
+  skR.position.set(0.32, 6.7, 0.88);
   torso.add(skL, skR);
+  // A hairline crack running down one side of the mask.
+  const crack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.85, 0.02), matte(0x141414, 0.9));
+  crack.position.set(0.42, 6.65, 0.92);
+  crack.rotation.z = 0.18;
+  crack.rotation.x = -0.1;
+  torso.add(crack);
 
   // Tiny white pupils
   const pupilGeo = new THREE.SphereGeometry(0.06, 8, 8);
@@ -744,15 +1176,33 @@ export function buildDealer(): FigureHandles {
 export function buildPlayer(): FigureHandles {
   const group = new THREE.Group();
   const torso = new THREE.Group();
-  const coat = matte(0x2a241d, 0.95);
-  const hoodMat = matte(0x1b1712, 0.97);
+  const coat = dress(matte(0x2a241d, 0.95), "fabric", { normalScale: 0.55 });
+  const hoodMat = dress(matte(0x1b1712, 0.97), "fabric", { normalScale: 0.6 });
   const flesh = matte(0x5a4f43, 0.85);
 
-  const lower = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.45, 3.0, 12), coat);
-  lower.position.y = 1.5;
+  // Lathed coat skirt with a slight flare and ragged hem.
+  const lower = lathe(
+    [
+      [1.5, 0.0],
+      [1.32, 0.5],
+      [1.1, 1.6],
+      [0.95, 2.4],
+      [0.9, 3.0],
+    ],
+    coat,
+    14,
+  );
   group.add(lower);
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + 0.5;
+    const strip = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.45 + (i % 2) * 0.2, 0.05), coat);
+    strip.position.set(Math.cos(a) * 1.4, 0.2, Math.sin(a) * 1.4);
+    strip.rotation.y = -a + Math.PI / 2;
+    group.add(strip);
+  }
 
-  const chest = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.95, 1.7, 12), coat);
+  const chest = new THREE.Mesh(new THREE.CapsuleGeometry(0.8, 1.0, 4, 12), coat);
+  chest.scale.set(1, 1, 0.8);
   chest.position.y = 3.3;
   torso.add(chest);
 
@@ -761,8 +1211,20 @@ export function buildPlayer(): FigureHandles {
   shoulders.position.y = 3.95;
   torso.add(shoulders);
 
-  const hood = new THREE.Mesh(new THREE.SphereGeometry(0.7, 16, 16), hoodMat);
-  hood.scale.set(1.0, 1.12, 1.1);
+  // Hood: a lathed cowl that drapes onto the shoulders and peaks slightly.
+  const hood = lathe(
+    [
+      [0.95, -0.55], // draped base spreading onto the shoulders
+      [0.78, -0.3],
+      [0.7, 0.0],
+      [0.66, 0.35],
+      [0.5, 0.62],
+      [0.18, 0.78], // slouched peak
+      [0.0, 0.74],
+    ],
+    hoodMat,
+    16,
+  );
   hood.position.y = 4.55;
   torso.add(hood);
   const brim = new THREE.Mesh(
@@ -846,39 +1308,64 @@ export function buildPlayerHands(): THREE.Group {
     cuff.position.set(0, 0.2, 0.12);
     handGroup.add(cuff);
 
-    // Palm: slightly domed, bony.
-    const hand = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.18, 0.62), flesh);
-    hand.position.set(0, 0.02, -0.2);
+    // Palm: a rounded, bony wedge (capsule squashed flat) with tendon ridges.
+    const hand = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.34, 4, 10), flesh);
+    hand.scale.set(1.05, 0.38, 1.15);
+    hand.rotation.x = Math.PI / 2;
+    hand.position.set(0, 0.04, -0.22);
     handGroup.add(hand);
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.24, 10, 8), flesh);
-    dome.scale.set(1.15, 0.45, 1.2);
-    dome.position.set(0, 0.1, -0.18);
-    handGroup.add(dome);
+    // Tendons fanning from the wrist to each knuckle.
+    for (let i = 0; i < 4; i++) {
+      const fx = -0.2 + i * 0.13;
+      const tendon = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.3, 2, 6), fleshDark);
+      tendon.rotation.x = Math.PI / 2 - 0.06;
+      tendon.rotation.z = fx * 0.5;
+      tendon.position.set(fx * 0.8, 0.1, -0.25);
+      handGroup.add(tendon);
+    }
 
-    // Four segmented fingers with knuckle bumps, splayed and tense.
+    // Four three-segment fingers with knuckle bumps, curled and tense.
     for (let i = 0; i < 4; i++) {
       const fx = -0.2 + i * 0.13;
       const splay = (i - 1.5) * 0.06;
-      const proximal = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.06, 0.26, 8), flesh);
+      const lenScale = i === 1 || i === 2 ? 1.08 : 0.94; // middle fingers longer
+      const proximal = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.052, 0.2 * lenScale, 2, 8),
+        flesh,
+      );
       proximal.rotation.x = Math.PI / 2 - 0.12;
       proximal.rotation.z = splay * 0.4;
       proximal.position.set(fx, -0.02, -0.55);
       handGroup.add(proximal);
-      const distal = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.055, 0.22, 8), flesh);
-      distal.rotation.x = Math.PI / 2 - 0.3;
-      distal.position.set(fx + splay * 0.3, -0.08, -0.76);
+      const middle = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.046, 0.14 * lenScale, 2, 8),
+        flesh,
+      );
+      middle.rotation.x = Math.PI / 2 - 0.42;
+      middle.position.set(fx + splay * 0.25, -0.09, -0.73);
+      handGroup.add(middle);
+      const distal = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.04, 0.09 * lenScale, 2, 8),
+        flesh,
+      );
+      distal.rotation.x = Math.PI / 2 - 0.8;
+      distal.position.set(fx + splay * 0.35, -0.17, -0.85);
       handGroup.add(distal);
-      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), fleshDark);
-      knuckle.position.set(fx, 0.04, -0.44);
+      const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.056, 8, 6), fleshDark);
+      knuckle.position.set(fx, 0.05, -0.45);
       handGroup.add(knuckle);
     }
 
-    // Thumb, tucked along the inner edge.
+    // Thumb: two segments tucked along the inner edge.
     const thumbSide = isLeft ? 1 : -1;
-    const thumb = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.065, 0.3, 8), flesh);
-    thumb.rotation.set(Math.PI / 2 - 0.2, 0, thumbSide * 0.9);
-    thumb.position.set(thumbSide * 0.32, 0, -0.32);
-    handGroup.add(thumb);
+    const thumbBase = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 0.18, 2, 8), flesh);
+    thumbBase.rotation.set(Math.PI / 2 - 0.2, 0, thumbSide * 0.9);
+    thumbBase.position.set(thumbSide * 0.3, 0.0, -0.28);
+    handGroup.add(thumbBase);
+    const thumbTip = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.12, 2, 8), flesh);
+    thumbTip.rotation.set(Math.PI / 2 - 0.5, 0, thumbSide * 0.6);
+    thumbTip.position.set(thumbSide * 0.42, -0.05, -0.44);
+    handGroup.add(thumbTip);
 
     handGroup.position.set(isLeft ? -2.5 : 2.5, 3.4, 6.5);
     handGroup.rotation.y = isLeft ? 0.2 : -0.2;
@@ -891,30 +1378,69 @@ export function buildPlayerHands(): THREE.Group {
   return group;
 }
 
-/** A simple two-segment arm with a hand, pivoting at the shoulder. */
+/**
+ * A two-segment arm with an articulated skeletal hand, pivoting at the
+ * shoulder. Same reach/pose as before so renderer arm rotations line up.
+ */
 function buildArm(
   coat: THREE.MeshStandardMaterial,
   flesh: THREE.MeshStandardMaterial,
   scale = 1,
 ): THREE.Group {
   const arm = new THREE.Group();
+  const s = scale;
+  // Shoulder cap under the sleeve.
+  const shoulder = new THREE.Mesh(new THREE.SphereGeometry(0.2 * s, 10, 8), coat);
+  arm.add(shoulder);
   const upper = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.18 * scale, 0.16 * scale, 1.4 * scale, 8),
+    new THREE.CapsuleGeometry(0.16 * s, 1.15 * s, 3, 10),
     coat,
   );
-  upper.position.y = -0.7 * scale;
+  upper.position.y = -0.7 * s;
   arm.add(upper);
+  // Elbow joint.
+  const elbow = new THREE.Mesh(new THREE.SphereGeometry(0.155 * s, 10, 8), coat);
+  elbow.position.set(0, -1.38 * s, 0.06 * s);
+  arm.add(elbow);
   const fore = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.15 * scale, 0.13 * scale, 1.2 * scale, 8),
+    new THREE.CapsuleGeometry(0.125 * s, 0.95 * s, 3, 10),
     coat,
   );
-  fore.position.set(0, -1.6 * scale, 0.35 * scale);
+  fore.position.set(0, -1.6 * s, 0.35 * s);
   fore.rotation.x = -0.5;
   arm.add(fore);
-  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.17 * scale, 8, 8), flesh);
-  hand.scale.set(1, 0.7, 1.2);
-  hand.position.set(0, -2.15 * scale, 0.7 * scale);
+  // Frayed sleeve cuff at the wrist.
+  const cuff = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15 * s, 0.17 * s, 0.16 * s, 10, 1, true),
+    coat,
+  );
+  cuff.position.set(0, -2.0 * s, 0.62 * s);
+  cuff.rotation.x = -0.5;
+  arm.add(cuff);
+  // Bony wrist + palm.
+  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.07 * s, 0.08 * s, 0.16 * s, 8), flesh);
+  wrist.position.set(0, -2.08 * s, 0.66 * s);
+  wrist.rotation.x = -0.5;
+  arm.add(wrist);
+  const hand = new THREE.Mesh(new THREE.SphereGeometry(0.15 * s, 10, 8), flesh);
+  hand.scale.set(1, 0.55, 1.3);
+  hand.position.set(0, -2.15 * s, 0.7 * s);
   arm.add(hand);
+  // Long thin fingers draping forward off the palm.
+  for (let i = 0; i < 4; i++) {
+    const fx = (-0.09 + i * 0.06) * s;
+    const finger = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.022 * s, 0.24 * s, 2, 6),
+      flesh,
+    );
+    finger.position.set(fx, -2.28 * s, 0.86 * s);
+    finger.rotation.x = -1.15 - (i % 2) * 0.12;
+    arm.add(finger);
+  }
+  const thumb = new THREE.Mesh(new THREE.CapsuleGeometry(0.025 * s, 0.16 * s, 2, 6), flesh);
+  thumb.position.set(0.15 * s, -2.18 * s, 0.72 * s);
+  thumb.rotation.set(-0.8, 0, -0.7);
+  arm.add(thumb);
   return arm;
 }
 
@@ -933,6 +1459,21 @@ export interface RevolverHandles {
   hammer?: THREE.Mesh;
 }
 
+/**
+ * Map an ExtrudeGeometry drawn in "gun profile space" into gun-table space.
+ * Profile space: shape-x = world Z (gun length, muzzle at -x), shape-y =
+ * world X (gun-up), extrusion depth = world Y (thickness lying on the felt).
+ */
+function gunProfileToTable(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const m = new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(0, 0, 1), // shape X -> world Z
+    new THREE.Vector3(1, 0, 0), // shape Y -> world X (gun-up)
+    new THREE.Vector3(0, 1, 0), // extrude Z -> world Y
+  );
+  geo.applyMatrix4(m);
+  return geo;
+}
+
 export function buildRevolver(): RevolverHandles {
   // A Colt-SAA-style revolver modelled lying on its SIDE on the table, so the
   // top-down camera sees its side profile (like the reference photo). The
@@ -941,94 +1482,200 @@ export function buildRevolver(): RevolverHandles {
   const group = new THREE.Group();
   // Worn blued steel: a near-black body whose edges catch the light where
   // decades of handling have rubbed the bluing away.
-  const silver = new THREE.MeshStandardMaterial({ color: 0x2e3138, metalness: 0.9, roughness: 0.35 });
-  const silverHi = new THREE.MeshStandardMaterial({ color: 0x4c515c, metalness: 0.85, roughness: 0.25 });
-  const wood = new THREE.MeshStandardMaterial({ color: 0x352016, metalness: 0.05, roughness: 0.75 });
+  const silver = dress(
+    new THREE.MeshStandardMaterial({ color: 0x2e3138, metalness: 0.9, roughness: 0.35 }),
+    "metal",
+    { normalScale: 0.35 },
+  );
+  const silverHi = dress(
+    new THREE.MeshStandardMaterial({ color: 0x4c515c, metalness: 0.85, roughness: 0.25 }),
+    "metal",
+    { normalScale: 0.3 },
+  );
+  const wood = dress(
+    new THREE.MeshStandardMaterial({ color: 0x3a2317, metalness: 0.05, roughness: 0.7 }),
+    "wood",
+    { normalScale: 0.8 },
+  );
   const brass = metalMat(PAL.brass, 0.4);
+  const boreDark = matte(0x060607, 0.6);
 
   const T = 0.36; // thickness in Y (how thick the gun is as it lies on its side)
   const yc = T / 2;
 
-  // --- Barrel (length along -Z, centered in the circle) -----------
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 1.8, 16), silver); // Shorter length (1.8) and silver
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0.0, yc, -1.2); // Centered (X=0) and moved back to match shorter length
-  group.add(barrel);
-  const ejector = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 1.4, 12), silverHi);
-  ejector.rotation.x = Math.PI / 2;
-  ejector.position.set(-0.18, yc, -1.1); // Adjusted ejector to fit
-  group.add(ejector);
-  const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.16, 16), silverHi);
-  muzzle.rotation.x = Math.PI / 2;
-  muzzle.position.set(0.0, yc, -2.1);
-  group.add(muzzle);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.16, T * 0.7, 0.08), silverHi);
-  sight.position.set(0.16, yc, -2.0);
-  group.add(sight);
-
-  // --- Frame -----------------------------------------------------------
-  const frameGeo = new THREE.BoxGeometry(0.8, T, 1.2);
+  // --- Frame: a real side-profile silhouette with a cylinder window -----
+  const frameShape = new THREE.Shape();
+  frameShape.moveTo(-0.75, 0.08);
+  frameShape.lineTo(-0.75, 0.3);
+  frameShape.quadraticCurveTo(-0.55, 0.4, -0.32, 0.43);
+  frameShape.quadraticCurveTo(0.15, 0.5, 0.55, 0.45); // top strap arc
+  frameShape.quadraticCurveTo(0.8, 0.36, 0.82, 0.12); // recoil shield
+  frameShape.quadraticCurveTo(0.84, -0.12, 0.68, -0.26);
+  frameShape.quadraticCurveTo(0.4, -0.36, 0.05, -0.33);
+  frameShape.quadraticCurveTo(-0.35, -0.26, -0.55, -0.08);
+  frameShape.quadraticCurveTo(-0.68, -0.0, -0.75, 0.08);
+  const win = new THREE.Path();
+  win.moveTo(-0.24, -0.18);
+  win.lineTo(0.6, -0.18);
+  win.lineTo(0.6, 0.34);
+  win.lineTo(-0.24, 0.34);
+  win.closePath();
+  frameShape.holes.push(win);
+  const frameGeo = new THREE.ExtrudeGeometry(frameShape, {
+    depth: T - 0.04,
+    bevelEnabled: true,
+    bevelThickness: 0.02,
+    bevelSize: 0.02,
+    bevelSegments: 2,
+    curveSegments: 14,
+  });
+  gunProfileToTable(frameGeo);
+  frameGeo.translate(0, 0.02, 0);
   const frame = new THREE.Mesh(frameGeo, silver);
-  frame.position.set(0.1, yc, 0);
   group.add(frame);
 
-  // --- Drum (Cylinder) -------------------------------------------------
+  // --- Barrel: tapered octagonal tube with a dark bore and front sight --
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.145, 0.17, 1.5, 8), silver);
+  barrel.rotation.x = Math.PI / 2;
+  barrel.rotation.y = Math.PI / 8; // flat facet on top so it reads octagonal
+  barrel.position.set(0.12, yc, -1.42);
+  group.add(barrel);
+  // Barrel lug blending the barrel into the frame.
+  const lug = new THREE.Mesh(new THREE.BoxGeometry(0.34, T * 0.9, 0.5), silver);
+  lug.position.set(0.0, yc, -0.85);
+  group.add(lug);
+  // Ejector-rod housing under the barrel.
+  const ejector = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.15, 10), silverHi);
+  ejector.rotation.x = Math.PI / 2;
+  ejector.position.set(-0.14, yc, -1.3);
+  group.add(ejector);
+  const ejectorTip = new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), silverHi);
+  ejectorTip.position.set(-0.14, yc, -1.9);
+  group.add(ejectorTip);
+  // Muzzle ring + dark bore.
+  const muzzle = new THREE.Mesh(new THREE.CylinderGeometry(0.165, 0.165, 0.12, 16), silverHi);
+  muzzle.rotation.x = Math.PI / 2;
+  muzzle.position.set(0.12, yc, -2.16);
+  group.add(muzzle);
+  const bore = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.03, 12), boreDark);
+  bore.rotation.x = Math.PI / 2;
+  bore.position.set(0.12, yc, -2.225);
+  group.add(bore);
+  // Blade front sight standing off the barrel's top edge (gun-up = +X).
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.16), silverHi);
+  sight.position.set(0.3, yc, -2.05);
+  group.add(sight);
+
+  // --- Drum (Cylinder): fluted, with bored chambers and cartridge rims --
   const drum = new THREE.Group();
   drum.position.set(0, yc, 0.18);
-  const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.95, 22), silverHi);
+  const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.95, 28), silverHi);
   cyl.rotation.x = Math.PI / 2; // axis along the barrel — shows the side bulge
   drum.add(cyl);
-  const chamberMat = glow(0xff6a2a, 0.35);
+  // Bevelled front edge of the cylinder.
+  const cylBevel = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.36, 0.06, 28), silverHi);
+  cylBevel.rotation.x = Math.PI / 2;
+  cylBevel.position.z = -0.5;
+  drum.add(cylBevel);
+  const rimBrass = metalMat(0xa8863a, 0.35);
+  const primerMat = metalMat(0x8d8d94, 0.3);
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
-    // Flute groove along the cylinder (the top ones read from above).
-    const f = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.82), silver);
-    f.position.set(Math.cos(a) * 0.36, Math.sin(a) * 0.36, 0);
-    f.rotation.z = a;
+    const half = Math.PI / 6;
+    // Flute groove between chambers (darker recessed channel).
+    const f = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.6, 10), silver);
+    f.rotation.x = Math.PI / 2;
+    f.position.set(Math.cos(a + half) * 0.375, Math.sin(a + half) * 0.375, 0.05);
     drum.add(f);
-    // A faint ember chamber mouth on the front face.
-    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.06, 8), chamberMat);
+    // Bored chamber mouth on the front face (dark, real-looking).
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.068, 0.068, 0.05, 12), boreDark);
     c.rotation.x = Math.PI / 2;
-    c.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, -0.5);
+    c.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, -0.505);
     drum.add(c);
-    
-    // Red ammo visible from the back of the drum
-    const bulletMat = new THREE.MeshStandardMaterial({ color: 0xb51c1c, metalness: 0.3, roughness: 0.5 });
-    const bullet = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.96, 8), bulletMat);
-    bullet.rotation.x = Math.PI / 2;
-    bullet.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0);
-    drum.add(bullet);
+    // Cartridge rim + primer visible on the rear face.
+    const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.078, 0.03, 12), rimBrass);
+    rim.rotation.x = Math.PI / 2;
+    rim.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0.49);
+    drum.add(rim);
+    const primer = new THREE.Mesh(new THREE.CylinderGeometry(0.028, 0.028, 0.032, 8), primerMat);
+    primer.rotation.x = Math.PI / 2;
+    primer.position.set(Math.cos(a) * 0.2, Math.sin(a) * 0.2, 0.492);
+    drum.add(primer);
+    // Locking notch at the cylinder's mid line.
+    const notch = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.02, 0.1), silver);
+    notch.position.set(Math.cos(a) * 0.355, Math.sin(a) * 0.355, 0.25);
+    notch.rotation.z = a + Math.PI / 2;
+    drum.add(notch);
   }
-  const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 1.0, 8), silverHi);
+  const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 1.1, 10), silverHi);
   pin.rotation.x = Math.PI / 2;
   drum.add(pin);
   group.add(drum);
 
-  // --- Hammer spur (back-top) ------------------------------------------
-  const hammer = new THREE.Mesh(new THREE.BoxGeometry(0.22, T * 0.85, 0.2), silverHi);
+  // --- Hammer: profiled spur (kept as ONE mesh at the same rest pose) ---
+  const hamShape = new THREE.Shape();
+  hamShape.moveTo(-0.1, -0.1);
+  hamShape.lineTo(-0.1, 0.06);
+  hamShape.quadraticCurveTo(-0.04, 0.12, 0.06, 0.12);
+  hamShape.lineTo(0.13, 0.16); // thumb spur rises back
+  hamShape.quadraticCurveTo(0.18, 0.17, 0.17, 0.1);
+  hamShape.lineTo(0.08, 0.02);
+  hamShape.lineTo(0.06, -0.1);
+  hamShape.closePath();
+  const hamGeo = new THREE.ExtrudeGeometry(hamShape, {
+    depth: T * 0.7,
+    bevelEnabled: true,
+    bevelThickness: 0.015,
+    bevelSize: 0.015,
+    bevelSegments: 1,
+    curveSegments: 8,
+  });
+  gunProfileToTable(hamGeo);
+  hamGeo.translate(0, -T * 0.35, 0); // centre thickness on the mesh origin
+  const hammer = new THREE.Mesh(hamGeo, silverHi);
   hammer.position.set(0.42, yc, 0.55);
   group.add(hammer);
 
   // --- Trigger guard + trigger (ring lies in the X-Z plane) ------------
-  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.045, 8, 20), silver);
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.05, 10, 24), silver);
   guard.rotation.x = Math.PI / 2;
   guard.position.set(-0.28, yc, 0.5);
   group.add(guard);
-  const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.05, T * 0.6, 0.18), silverHi);
-  trigger.position.set(-0.24, yc, 0.5);
+  const trigger = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.02, 0.2, 8), silverHi);
+  trigger.rotation.z = 0.35;
+  trigger.rotation.x = 0.2;
+  trigger.position.set(-0.24, yc, 0.48);
   group.add(trigger);
 
-  // --- Plow-handle wood grip, angled down-and-back ---------------------
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.46, T, 1.05), wood);
-  grip.position.set(-0.5, yc, 0.92);
-  grip.rotation.y = 0.7;
+  // --- Plow-handle wood grip: curved profile, angled down-and-back ------
+  const gripShape = new THREE.Shape();
+  gripShape.moveTo(-0.2, 0.16);
+  gripShape.quadraticCurveTo(0.35, 0.2, 0.5, 0.02); // backstrap curve
+  gripShape.quadraticCurveTo(0.62, -0.2, 0.5, -0.3); // butt swell
+  gripShape.quadraticCurveTo(0.3, -0.42, 0.0, -0.36);
+  gripShape.quadraticCurveTo(-0.24, -0.3, -0.26, -0.05);
+  gripShape.quadraticCurveTo(-0.27, 0.12, -0.2, 0.16);
+  const gripGeo = new THREE.ExtrudeGeometry(gripShape, {
+    depth: T - 0.06,
+    bevelEnabled: true,
+    bevelThickness: 0.05,
+    bevelSize: 0.04,
+    bevelSegments: 3,
+    curveSegments: 12,
+  });
+  gunProfileToTable(gripGeo);
+  gripGeo.translate(0, 0.03, 0);
+  const grip = new THREE.Mesh(gripGeo, wood);
+  grip.position.set(-0.62, 0, 1.0);
+  grip.rotation.y = 0.55;
   group.add(grip);
-  const buttcap = new THREE.Mesh(new THREE.BoxGeometry(0.5, T, 0.14), silverHi);
-  buttcap.position.set(-0.92, yc, 1.32);
+  // Steel backstrap cap on the butt.
+  const buttcap = new THREE.Mesh(new THREE.BoxGeometry(0.42, T * 0.9, 0.1), silverHi);
+  buttcap.position.set(-0.98, yc, 1.34);
   buttcap.rotation.y = 0.7;
   group.add(buttcap);
   const screw = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, T + 0.02, 10), brass);
-  screw.position.set(-0.5, yc, 0.92);
+  screw.position.set(-0.55, yc, 0.95);
   group.add(screw);
 
   // Muzzle flash (hidden until fired).
@@ -1063,28 +1710,53 @@ export interface HpMarker {
 
 export function buildHpMarker(): HpMarker {
   const group = new THREE.Group();
-  const waxMat = matte(PAL.bone, 0.6);
+  const waxMat = dress(matte(PAL.bone, 0.55), "plaster", { normalScale: 0.5 });
 
-  // A small tarnished dish the candle stands in.
-  const dish = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.2, 0.22, 0.06, 16),
-    metalMat(0x4a3f28, 0.7),
+  // A small tarnished lathed dish the candle stands in.
+  const dish = lathe(
+    [
+      [0.0, 0.0],
+      [0.16, 0.0],
+      [0.24, 0.02],
+      [0.26, 0.06],
+      [0.22, 0.08],
+      [0.14, 0.05],
+      [0.0, 0.05],
+    ],
+    dress(metalMat(0x4a3f28, 0.7), "metal", { normalScale: 0.3 }),
+    18,
   );
-  dish.position.y = 0.03;
   group.add(dish);
 
-  // Wax column, with melted drips crawling down its sides.
-  const wax = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.13, 0.5, 12), waxMat);
+  // Wax column — lathed with a sagging melted lip and pooled base. The mesh
+  // keeps its rest pose (centre y=0.3, unit scale) so renderer melt-scaling
+  // (wax.scale.y / wax.position.y) works unchanged.
+  const waxGeo = new THREE.LatheGeometry(
+    [
+      [0.16, -0.25], // pooled base spread
+      [0.14, -0.2],
+      [0.12, -0.05],
+      [0.115, 0.1],
+      [0.125, 0.18], // sagging lip bulge
+      [0.13, 0.22],
+      [0.1, 0.25], // rim folds inward
+      [0.05, 0.22], // melted crater
+      [0.0, 0.23],
+    ].map(([r, y]) => new THREE.Vector2(Math.max(r, 0.0001), y)),
+    16,
+  );
+  const wax = new THREE.Mesh(waxGeo, waxMat);
   wax.position.y = 0.3;
   group.add(wax);
   for (const [dy, dr, da] of [
-    [0.42, 0.03, 0.4],
-    [0.3, 0.025, 2.2],
-    [0.18, 0.035, 4.4],
+    [0.44, 0.028, 0.4],
+    [0.32, 0.024, 2.2],
+    [0.2, 0.034, 4.4],
+    [0.38, 0.02, 3.3],
   ] as const) {
-    const drip = new THREE.Mesh(new THREE.SphereGeometry(dr, 6, 6), waxMat);
-    drip.scale.set(1, 1.8, 1);
-    drip.position.set(Math.cos(da) * 0.12, dy, Math.sin(da) * 0.12);
+    const drip = new THREE.Mesh(new THREE.SphereGeometry(dr, 8, 8), waxMat);
+    drip.scale.set(1, 2.2, 1);
+    drip.position.set(Math.cos(da) * 0.125, dy, Math.sin(da) * 0.125);
     group.add(drip);
   }
 
@@ -1425,40 +2097,82 @@ export function buildBloodBurst(count = 150): BloodBurst {
 
 export function buildShell(live: boolean): THREE.Group {
   const g = new THREE.Group();
-  const brass = metalMat(PAL.brass, 0.3);
-  const casing = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.46, 16), brass);
-  casing.position.y = 0.23;
+  const brass = dress(metalMat(PAL.brass, 0.3), "metal", { normalScale: 0.25 });
+
+  // One continuous lathed case profile: base rim -> extraction groove ->
+  // straight walls with a slight body taper toward the mouth.
+  const casing = lathe(
+    [
+      [0.11, 0.0], // base centre-out
+      [0.15, 0.0], // rim edge
+      [0.15, 0.045], // rim top
+      [0.125, 0.055], // into extraction groove
+      [0.122, 0.075],
+      [0.135, 0.09], // out of groove — case wall begins
+      [0.132, 0.3],
+      [0.128, 0.46], // case mouth
+    ],
+    brass,
+    20,
+  );
   g.add(casing);
-  // Rim at the base.
-  const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.05, 16), brass);
-  rim.position.y = 0.025;
-  g.add(rim);
+  // Base head-stamp disc + primer.
+  const head = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.012, 16), brass);
+  head.position.y = 0.006;
+  g.add(head);
 
   if (live) {
-    // A copper round-nose bullet seated in the case (the LIVE round).
-    const copper = metalMat(0xb87333, 0.3);
-    const nose = new THREE.Mesh(
-      new THREE.SphereGeometry(0.13, 14, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+    // A copper round-nose bullet seated in the case (the LIVE round) —
+    // ogive drawn as a lathe curve, with a seating crimp ring.
+    const copper = dress(metalMat(0xb87333, 0.3), "metal", { normalScale: 0.2 });
+    const nose = lathe(
+      [
+        [0.128, 0.46],
+        [0.126, 0.52],
+        [0.115, 0.6],
+        [0.09, 0.67],
+        [0.055, 0.72],
+        [0.0, 0.745],
+      ],
       copper,
+      18,
     );
-    nose.scale.set(1, 1.5, 1);
-    nose.position.y = 0.46;
     g.add(nose);
+    const crimp = new THREE.Mesh(new THREE.TorusGeometry(0.128, 0.008, 6, 18), copper);
+    crimp.rotation.x = Math.PI / 2;
+    crimp.position.y = 0.47;
+    g.add(crimp);
   } else {
-    // A blank: dull blue-grey lacquered casing with a dark hollow mouth, so
-    // the silhouette reads instantly against the warm brass of a live round.
-    const lacquer = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.135, 0.135, 0.4, 16),
+    // A blank: dull blue-grey lacquered casing with a star-crimped hollow
+    // mouth, so the silhouette reads instantly against warm brass.
+    const lacquer = lathe(
+      [
+        [0.136, 0.09],
+        [0.134, 0.3],
+        [0.13, 0.42],
+        [0.1, 0.5], // crimp taper
+        [0.045, 0.545],
+      ],
       matte(0x3d4a55, 0.85),
+      20,
     );
-    lacquer.position.y = 0.25;
     g.add(lacquer);
     const mouth = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.11, 0.12, 0.08, 16),
-      matte(0x14140f, 0.7),
+      new THREE.CylinderGeometry(0.04, 0.05, 0.03, 10),
+      matte(0x0c0c09, 0.7),
     );
-    mouth.position.y = 0.47;
+    mouth.position.y = 0.545;
     g.add(mouth);
+    // Star-crimp folds.
+    const foldMat = matte(0x2e3942, 0.85);
+    for (let i = 0; i < 5; i++) {
+      const a = (i / 5) * Math.PI * 2;
+      const fold = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.02), foldMat);
+      fold.position.set(Math.cos(a) * 0.07, 0.49, Math.sin(a) * 0.07);
+      fold.rotation.y = -a;
+      fold.rotation.x = 0.5;
+      g.add(fold);
+    }
   }
 
   castReceive(g, true, false);
@@ -1621,12 +2335,37 @@ export interface Briefcase {
 export function buildBriefcase(): Briefcase {
   const group = new THREE.Group();
   
-  const caseMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8, metalness: 0.2 });
-  
-  // Base
-  const baseBox = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 1.5), caseMat);
-  baseBox.position.y = 0.3;
+  const caseMat = dress(
+    new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.8, metalness: 0.2 }),
+    "leather",
+    { normalScale: 0.7 },
+  );
+
+  // Base: a rounded-corner leather shell instead of a raw box.
+  const baseGeo = new THREE.ExtrudeGeometry(roundedRectShape(1.5, 1.5, 0.12), {
+    depth: 0.52,
+    bevelEnabled: true,
+    bevelThickness: 0.04,
+    bevelSize: 0.04,
+    bevelSegments: 2,
+    curveSegments: 8,
+  });
+  baseGeo.rotateX(-Math.PI / 2);
+  const baseBox = new THREE.Mesh(baseGeo, caseMat);
+  baseBox.position.y = 0.56;
   group.add(baseBox);
+  // Reinforced corner caps.
+  const capMat = metalMat(0x6a5a2e, 0.45);
+  for (const [cx, cz] of [[-0.68, -0.68], [0.68, -0.68], [-0.68, 0.68], [0.68, 0.68]] as const) {
+    const cap = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), capMat);
+    cap.scale.set(1, 0.7, 1);
+    cap.position.set(cx, 0.1, cz);
+    group.add(cap);
+  }
+  // Side handle.
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 8, 16, Math.PI), caseMat);
+  handle.position.set(0, 0.62, 0.79);
+  group.add(handle);
 
   // Brass latches on the front edge + a dark red felt interior well that
   // shows when the lid swings open.
@@ -1851,27 +2590,24 @@ export function buildBetChip(value: number): BetChip {
   const R = 0.28; // coin radius
   const count = value >= 10000 ? 8 : value >= 1000 ? 4 : 1;
 
+  // Shared geometry across the stack — one disc + one reeded edge ring.
+  dress(brass, "metal", { normalScale: 0.3 });
+  const discGeo = new THREE.CylinderGeometry(R, R, coinH, 40);
+  // Reeded edge as a single ridged ring: a scaled torus with high radial
+  // segment count reads as milling under the normal map (vs 28 box meshes).
+  const edgeGeo = new THREE.TorusGeometry(R - 0.005, coinH * 0.42, 6, 48);
   for (let i = 0; i < count; i++) {
     const y = i * coinH;
-    // Main disc.
-    const disc = new THREE.Mesh(new THREE.CylinderGeometry(R, R, coinH, 36), brass);
+    const disc = new THREE.Mesh(discGeo, brass);
     disc.position.y = y + coinH / 2;
     group.add(disc);
-    // Reeded edge: many small vertical ribs around the circumference.
-    const ribGeo = new THREE.BoxGeometry(0.012, coinH * 0.7, 0.02);
-    for (let r = 0; r < 28; r++) {
-      const a = (r / 28) * Math.PI * 2;
-      const rib = new THREE.Mesh(ribGeo, brassDark);
-      rib.position.set(
-        Math.cos(a) * (R + 0.005),
-        y + coinH / 2,
-        Math.sin(a) * (R + 0.005),
-      );
-      rib.rotation.y = a;
-      group.add(rib);
-    }
-    // Raised rim border on top and bottom faces.
-    const rimTop = new THREE.Mesh(new THREE.TorusGeometry(R - 0.03, 0.018, 6, 28), brassLight);
+    const edge = new THREE.Mesh(edgeGeo, brassDark);
+    edge.rotation.x = Math.PI / 2;
+    edge.scale.z = 0.9;
+    edge.position.y = y + coinH / 2;
+    group.add(edge);
+    // Raised rim border on the top face.
+    const rimTop = new THREE.Mesh(new THREE.TorusGeometry(R - 0.03, 0.018, 6, 32), brassLight);
     rimTop.rotation.x = Math.PI / 2;
     rimTop.position.y = y + coinH;
     group.add(rimTop);
