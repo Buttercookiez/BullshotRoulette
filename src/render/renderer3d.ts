@@ -449,9 +449,9 @@ export class Renderer3D implements IRenderer {
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    // Warm yellow bulb — dim, tight falloff: a small pool of old
-    // incandescent-yellow lamplight in a room of black.
-    const bulb = new THREE.PointLight(0xffc860, 20, 20, 2);
+    // Warm incandescent bulb (~2400K amber): dim, tight falloff — a small
+    // pool of old tungsten lamplight in a room of black.
+    const bulb = new THREE.PointLight(0xffb454, 30, 22, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
@@ -460,26 +460,80 @@ export class Renderer3D implements IRenderer {
     scene.add(bulb);
     this.bulb = bulb;
 
+    // Glass envelope: hot amber core reading through slightly smoked glass.
     const bulbMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.25, 16, 16),
       new THREE.MeshStandardMaterial({
-        color: 0xffdc98,
-        emissive: 0xffc860,
-        emissiveIntensity: 2.2,
+        color: 0xffc880,
+        emissive: 0xffa040,
+        emissiveIntensity: 2.6,
+        transparent: true,
+        opacity: 0.92,
+        roughness: 0.15,
       }),
     );
+    // Glowing filament point inside the envelope — the hot spot your eye
+    // reads as "real bulb".
+    const filament = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07, 8, 8),
+      new THREE.MeshStandardMaterial({
+        color: 0xffe8b0,
+        emissive: 0xffdc8a,
+        emissiveIntensity: 6,
+      }),
+    );
+    bulbMesh.add(filament);
+    // Soft warm halo sprite around the glass (fake volumetric glow).
+    const haloTex = (() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      const ctx = c.getContext("2d")!;
+      const grad = ctx.createRadialGradient(32, 32, 2, 32, 32, 32);
+      grad.addColorStop(0, "rgba(255, 190, 110, 0.55)");
+      grad.addColorStop(0.4, "rgba(255, 160, 70, 0.22)");
+      grad.addColorStop(1, "rgba(255, 140, 50, 0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(c);
+    })();
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: haloTex,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    halo.scale.set(2.6, 2.6, 1);
+    bulbMesh.add(halo);
+    // Brass screw base instead of flat grey plastic.
     const bulbBase = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.12, 0.3, 8),
-      new THREE.MeshStandardMaterial({ color: 0x333333 })
+      new THREE.CylinderGeometry(0.11, 0.13, 0.3, 10),
+      new THREE.MeshStandardMaterial({ color: 0x6a5432, metalness: 0.8, roughness: 0.45 }),
     );
     bulbBase.position.y = 0.3;
     bulbMesh.add(bulbBase);
-    const shade = new THREE.Mesh(
+    // Shade: dark green-enamel outside, warm reflective inside — the inner
+    // face catches the bulb and bounces amber back down like a real fixture.
+    const shadeOuter = new THREE.Mesh(
       new THREE.ConeGeometry(1.4, 0.9, 16, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0x1a1a1c, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({ color: 0x141810, roughness: 0.5, metalness: 0.4, side: THREE.FrontSide }),
     );
-    shade.position.y = 0.45;
-    bulbMesh.add(shade);
+    shadeOuter.position.y = 0.45;
+    bulbMesh.add(shadeOuter);
+    const shadeInner = new THREE.Mesh(
+      new THREE.ConeGeometry(1.38, 0.88, 16, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: 0xc9a068,
+        roughness: 0.35,
+        metalness: 0.6,
+        emissive: 0x8a5c24,
+        emissiveIntensity: 0.35,
+        side: THREE.BackSide,
+      }),
+    );
+    shadeInner.position.y = 0.45;
+    bulbMesh.add(shadeInner);
 
     bulbMesh.position.copy(bulb.position);
     scene.add(bulbMesh);
@@ -1975,17 +2029,19 @@ export class Renderer3D implements IRenderer {
         this.nextBlink = nowMs + 2600 + Math.random() * 5200;
         this.onBlink(); // play the flicker sound
       }
-      const intensity = 42 * waver * blinkMul;
+      // Base 30 matches the warm tungsten bulb set up in the constructor.
+      const intensity = 30 * waver * blinkMul;
       this.bulb.intensity = intensity;
       (this.bulbMesh.material as THREE.MeshStandardMaterial).emissiveIntensity =
-        0.15 + (intensity / 42) * 2.8;
+        0.15 + (intensity / 30) * 2.8;
     }
 
     if (this.hallwayLight) {
       const hWaver = 0.85 + 0.1 * Math.sin(t * 3.7) + 0.05 * Math.sin(t * 11.2);
       // occasional sharp flicker
       const hBlink = Math.random() < 0.02 ? 0.2 : 1.0;
-      this.hallwayLight.intensity = 30 * hWaver * hBlink;
+      // Base 5 keeps the hallway a faint amber glimmer under the door.
+      this.hallwayLight.intensity = 5 * hWaver * hBlink;
     }
 
     // --- Figures breathe / sway; eyes + grin shimmer --------------------
