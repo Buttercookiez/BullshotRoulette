@@ -20,6 +20,7 @@
 //     in `./viewModel`, identical to the 2D renderer, so behaviour is testable.
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { gsap } from "gsap";
 import type { Action, GameEvent, GameState, ItemType, ParticipantId } from "../engine/types";
 import {
@@ -425,8 +426,18 @@ export class Renderer3D implements IRenderer {
     camera.position.copy(this.camPos);
     camera.lookAt(this.camLook);
 
+    // --- Environment map: a very dim PMREM room so metals (revolver, table,
+    // shells, chips) pick up real reflections instead of reading flat black.
+    if (this.renderer) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environmentIntensity = 0.18;
+      pmrem.dispose();
+    }
+
     // --- Lighting: dim ambient + swinging bulb + a warm camera-side fill --
-    scene.add(new THREE.AmbientLight(0x3a3034, 1.15));
+    // (Ambient slightly lowered since the env map now contributes base light.)
+    scene.add(new THREE.AmbientLight(0x3a3034, 0.95));
 
     // A soft warm fill from the camera so the figures' fronts read (no shadow
     // so it never fights the bulb's cast shadows).
@@ -439,6 +450,7 @@ export class Renderer3D implements IRenderer {
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
     bulb.shadow.bias = -0.0005;
+    bulb.shadow.radius = 4; // soften the swinging-bulb shadow edges
     scene.add(bulb);
     this.bulb = bulb;
 
@@ -485,8 +497,9 @@ export class Renderer3D implements IRenderer {
     hallwayLight.target.position.set(0, 4, -2);
     scene.add(hallwayLight.target);
     hallwayLight.castShadow = true;
-    hallwayLight.shadow.mapSize.set(1024, 1024);
+    hallwayLight.shadow.mapSize.set(2048, 2048);
     hallwayLight.shadow.bias = -0.0005;
+    hallwayLight.shadow.radius = 3;
     scene.add(hallwayLight);
     this.hallwayLight = hallwayLight;
 

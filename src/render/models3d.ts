@@ -349,7 +349,7 @@ function makeNormalMap(kind: SurfaceKind, strength = 1): THREE.Texture | null {
       const h = (x: number, y: number): number => {
         const xi = ((x % N) + N) % N;
         const yi = ((y % N) + N) % N;
-        return data[(yi * N + xi) * 4] / 255;
+        return (data[(yi * N + xi) * 4] ?? 128) / 255;
       };
 
       const out = document.createElement("canvas");
@@ -464,22 +464,24 @@ function lathe(
   return new THREE.Mesh(new THREE.LatheGeometry(pts, segments), mat);
 }
 
-/** An extruded 2D Shape with a small bevel — crisper than raw boxes. */
-function extruded(
-  shape: THREE.Shape,
-  depth: number,
-  mat: THREE.Material,
-  bevel = 0.02,
-): THREE.Mesh {
-  const geo = new THREE.ExtrudeGeometry(shape, {
-    depth,
-    bevelEnabled: bevel > 0,
-    bevelThickness: bevel,
-    bevelSize: bevel,
-    bevelSegments: 2,
-    curveSegments: 12,
-  });
-  return new THREE.Mesh(geo, mat);
+/**
+ * Remap a geometry's UVs to a 0..1 planar projection over its X-Z bounding
+ * box — fixes the raw shape-unit UVs ExtrudeGeometry generates, which
+ * otherwise tile textures once per world unit.
+ */
+function normalizePlanarUVs(geo: THREE.BufferGeometry): void {
+  geo.computeBoundingBox();
+  const bb = geo.boundingBox;
+  if (!bb) return;
+  const sx = bb.max.x - bb.min.x || 1;
+  const sz = bb.max.z - bb.min.z || 1;
+  const pos = geo.getAttribute("position");
+  const uv = geo.getAttribute("uv");
+  if (!pos || !uv) return;
+  for (let i = 0; i < pos.count; i++) {
+    uv.setXY(i, (pos.getX(i) - bb.min.x) / sx, (pos.getZ(i) - bb.min.z) / sz);
+  }
+  uv.needsUpdate = true;
 }
 
 /** Rounded-rectangle Shape helper (centred at origin). */
@@ -873,6 +875,7 @@ export function buildTable(): THREE.Group {
     },
   );
   topGeo.rotateX(-Math.PI / 2);
+  normalizePlanarUVs(topGeo);
   const top = new THREE.Mesh(topGeo, steelTop);
   top.position.y = TABLE.topY + TABLE.thickness / 2 - 0.04;
   g.add(top);
@@ -1742,7 +1745,7 @@ export function buildHpMarker(): HpMarker {
       [0.1, 0.25], // rim folds inward
       [0.05, 0.22], // melted crater
       [0.0, 0.23],
-    ].map(([r, y]) => new THREE.Vector2(Math.max(r, 0.0001), y)),
+    ].map((p) => new THREE.Vector2(Math.max(p[0] as number, 0.0001), p[1] as number)),
     16,
   );
   const wax = new THREE.Mesh(waxGeo, waxMat);
@@ -1921,26 +1924,36 @@ export function buildItemContents(item: ItemType): THREE.Group {
       break;
     }
     case "MEDKIT": {
-      // An energy-drink can (the in-fiction "medkit"): blue body, silver rims,
-      // a white lightning bolt, and a pull-tab top — standing upright.
-      const can = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.15, 0.42, 20),
+      // An energy-drink can (the in-fiction "medkit"): a single lathed body
+      // with real can geometry — necked base, straight wall, tapered shoulder.
+      const can = lathe(
+        [
+          [0.11, 0.0], // recessed base
+          [0.14, 0.015],
+          [0.15, 0.05], // base chime
+          [0.15, 0.34], // straight wall
+          [0.12, 0.42], // shoulder taper
+          [0.115, 0.44], // top seam
+        ],
         new THREE.MeshStandardMaterial({ color: 0x1b50c0, metalness: 0.5, roughness: 0.35 }),
+        22,
       );
-      can.position.y = 0.21;
       g.add(can);
-      const rimTop = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.15, 0.05, 20),
+      // Silver top lid with seam ring and pull-tab.
+      const lid = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.115, 0.115, 0.015, 20),
         metalMat(0xb8bcc4, 0.3),
       );
-      rimTop.position.y = 0.43;
-      g.add(rimTop);
-      const rimBot = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.15, 0.15, 0.05, 20),
-        metalMat(0xb8bcc4, 0.3),
-      );
-      rimBot.position.y = 0.02;
-      g.add(rimBot);
+      lid.position.y = 0.445;
+      g.add(lid);
+      const seam = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.008, 6, 20), metalMat(0xb8bcc4, 0.3));
+      seam.rotation.x = Math.PI / 2;
+      seam.position.y = 0.45;
+      g.add(seam);
+      const tab = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.008, 6, 12), metalMat(0x989ca4, 0.35));
+      tab.rotation.x = Math.PI / 2;
+      tab.position.set(0.03, 0.46, 0);
+      g.add(tab);
       // White lightning bolt on the side (two angled slivers).
       const boltMat = glow(0xeef2ff, 0.5);
       const b1 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.02), boltMat);
@@ -2024,25 +2037,41 @@ export function buildItemContents(item: ItemType): THREE.Group {
         transparent: true,
         opacity: 0.28,
       });
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.34, 16), glassMat);
-      body.position.y = 0.2;
+      // One lathed glass profile: rounded base, straight wall, curved
+      // shoulder narrowing into the neck.
+      const body = lathe(
+        [
+          [0.06, 0.02],
+          [0.095, 0.05],
+          [0.1, 0.12],
+          [0.1, 0.3], // straight wall
+          [0.085, 0.36], // shoulder curve
+          [0.06, 0.39],
+          [0.055, 0.44], // neck
+        ],
+        glassMat,
+        18,
+      );
       g.add(body);
       // Dark serum filling most of the vial.
       const serum = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.085, 0.085, 0.24, 16),
-        new THREE.MeshStandardMaterial({ color: 0x1a0606, roughness: 0.4 }),
+        new THREE.CylinderGeometry(0.082, 0.078, 0.24, 16),
+        new THREE.MeshStandardMaterial({ color: 0x1a0606, roughness: 0.35 }),
       );
       serum.position.y = 0.17;
       g.add(serum);
-      // Neck + worn metal cap.
-      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.06, 12), glassMat);
-      neck.position.y = 0.4;
-      g.add(neck);
-      const cap = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.075, 0.075, 0.08, 12),
+      // Worn crimped metal cap with a ribbed skirt.
+      const cap = lathe(
+        [
+          [0.055, 0.43],
+          [0.075, 0.44],
+          [0.078, 0.5],
+          [0.06, 0.52],
+          [0.0, 0.525],
+        ],
         metalMat(0x6a665e, 0.6),
+        14,
       );
-      cap.position.y = 0.46;
       g.add(cap);
       break;
     }
