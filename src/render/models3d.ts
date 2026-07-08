@@ -501,6 +501,29 @@ function roundedRectShape(w: number, h: number, r: number): THREE.Shape {
   return s;
 }
 
+/** An irregular splashed-liquid outline (deterministic per seed). */
+function puddleShape(radius: number, seed: number): THREE.Shape {
+  const s = new THREE.Shape();
+  const lobes = 8;
+  const rnd = (i: number): number => {
+    const v = Math.sin(seed * 127.1 + i * 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
+  for (let i = 0; i <= lobes; i++) {
+    const a = (i / lobes) * Math.PI * 2;
+    const r = radius * (0.72 + rnd(i % lobes) * 0.45);
+    const x = Math.cos(a) * r;
+    const y = Math.sin(a) * r;
+    if (i === 0) s.moveTo(x, y);
+    else {
+      const am = a - Math.PI / lobes;
+      const rm = radius * (0.85 + rnd(i % lobes + 20) * 0.35);
+      s.quadraticCurveTo(Math.cos(am) * rm, Math.sin(am) * rm, x, y);
+    }
+  }
+  return s;
+}
+
 // ---------------------------------------------------------------------------
 // Room: an industrial back-room — stained concrete, corrugated panels, exposed
 // pipes, a barred vent leaking cold light, wet floor patches. The fog still
@@ -522,25 +545,35 @@ export function buildRoom(): THREE.Group {
   floor.receiveShadow = true;
   g.add(floor);
 
-  // Standing water: low-roughness puddles that catch the overhead light.
+  // Standing water: near-mirror irregular puddles that catch the swinging
+  // bulb and env map, ringed by a darker soaked halo on the concrete.
   const puddleMat = new THREE.MeshStandardMaterial({
-    color: 0x0c0d10,
-    roughness: 0.15,
-    metalness: 0.4,
+    color: 0x0a0c10,
+    roughness: 0.04,
+    metalness: 0.85,
+    envMapIntensity: 2.2,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.92,
   });
-  for (const [px, pz, pr] of [
-    [-6, 4, 2.2],
-    [7, -3, 3.0],
-    [-3, -8, 1.6],
-    [4, 9, 2.6],
+  const haloMat = matte(0x101114, 0.5, 0.06);
+  haloMat.transparent = true;
+  haloMat.opacity = 0.6;
+  for (const [px, pz, pr, seed] of [
+    [-6, 4, 2.2, 1],
+    [7, -3, 3.0, 2],
+    [-3, -8, 1.6, 3],
+    [4, 9, 2.6, 4],
+    [-9, -2, 1.3, 5],
   ] as const) {
-    const puddle = new THREE.Mesh(new THREE.CircleGeometry(pr, 20), puddleMat);
+    const puddle = new THREE.Mesh(new THREE.ShapeGeometry(puddleShape(pr, seed), 24), puddleMat);
     puddle.rotation.x = -Math.PI / 2;
-    puddle.position.set(px, 0.01, pz);
+    puddle.position.set(px, 0.015, pz);
     puddle.receiveShadow = true;
     g.add(puddle);
+    const halo = new THREE.Mesh(new THREE.ShapeGeometry(puddleShape(pr * 1.25, seed + 9), 20), haloMat);
+    halo.rotation.x = -Math.PI / 2;
+    halo.position.set(px, 0.008, pz);
+    g.add(halo);
   }
 
   // Stained concrete walls — plaster normal map gives the cinderblock relief.
@@ -819,18 +852,31 @@ export function buildRoom(): THREE.Group {
   drainBase.rotation.x = -Math.PI / 2;
   drainGroup.add(drainBase);
   
-  // Dark fluid puddle
+  // Dark blood pooled around the drain — wet-glossy, irregular, with thin
+  // runnels reaching toward the grate.
   const drainPuddleMat = new THREE.MeshStandardMaterial({
     color: 0x2a0808, // dark blood
-    roughness: 0.1,
-    metalness: 0.3,
+    roughness: 0.06,
+    metalness: 0.5,
+    envMapIntensity: 1.6,
     transparent: true,
-    opacity: 0.85
+    opacity: 0.9,
   });
-  const drainPuddle = new THREE.Mesh(new THREE.CircleGeometry(1.6, 16), drainPuddleMat);
+  const drainPuddle = new THREE.Mesh(
+    new THREE.ShapeGeometry(puddleShape(1.6, 13), 24),
+    drainPuddleMat,
+  );
   drainPuddle.rotation.x = -Math.PI / 2;
   drainPuddle.position.y = 0.01;
   drainGroup.add(drainPuddle);
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + 0.6;
+    const runnel = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.1 + (i % 2) * 0.5), drainPuddleMat);
+    runnel.rotation.x = -Math.PI / 2;
+    runnel.rotation.z = a;
+    runnel.position.set(Math.cos(a) * 1.9, 0.009, Math.sin(a) * 1.9);
+    drainGroup.add(runnel);
+  }
 
   castReceive(drainGroup, true, true);
   g.add(drainGroup);
@@ -877,7 +923,10 @@ export function buildTable(): THREE.Group {
   topGeo.rotateX(-Math.PI / 2);
   normalizePlanarUVs(topGeo);
   const top = new THREE.Mesh(topGeo, steelTop);
-  top.position.y = TABLE.topY + TABLE.thickness / 2 - 0.04;
+  // After rotateX the extrusion (depth + bevel) extends UP from the mesh
+  // origin: geometry spans y in [-0.04, depth + 0.04]. Anchor it so the top
+  // face lands exactly at SURFACE_Y and nothing on the felt gets swallowed.
+  top.position.y = SURFACE_Y - (TABLE.thickness - 0.08 + 0.04);
   g.add(top);
 
   // A darker brushed-metal playing surface inset into the top — blood-stained
@@ -1115,35 +1164,83 @@ export function buildDealer(): FigureHandles {
   skR.scale.set(1.2, 0.85, 0.6);
   skR.position.set(0.32, 6.7, 0.88);
   torso.add(skL, skR);
-  // A hairline crack running down one side of the mask.
-  const crack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.85, 0.02), matte(0x141414, 0.9));
+  // Spiderwebbed cracks across the porcelain — one long fault plus branches.
+  const crackMat = matte(0x141414, 0.9);
+  const crack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.85, 0.02), crackMat);
   crack.position.set(0.42, 6.65, 0.92);
   crack.rotation.z = 0.18;
   crack.rotation.x = -0.1;
   torso.add(crack);
+  for (const [cx, cy, len, rz] of [
+    [0.34, 7.0, 0.3, 0.9],
+    [0.5, 6.35, 0.26, -0.6],
+    [-0.28, 7.15, 0.34, 0.5],
+    [-0.44, 6.5, 0.24, -1.1],
+  ] as const) {
+    const branch = new THREE.Mesh(new THREE.BoxGeometry(0.015, len, 0.015), crackMat);
+    branch.position.set(cx, cy, 0.9);
+    branch.rotation.z = rz;
+    branch.rotation.x = -0.1;
+    torso.add(branch);
+  }
+  // Black tear streaks weeping from the inner corner of each socket.
+  const tearMat = matte(0x0a0a0c, 0.55);
+  for (const sx of [-1, 1] as const) {
+    const tear = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.55, 0.02), tearMat);
+    tear.position.set(sx * 0.24, 6.35, 0.96);
+    tear.rotation.z = sx * -0.08;
+    tear.rotation.x = -0.12;
+    torso.add(tear);
+    const tearEnd = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), tearMat);
+    tearEnd.scale.set(1, 1.6, 0.5);
+    tearEnd.position.set(sx * 0.28, 6.06, 0.97);
+    torso.add(tearEnd);
+  }
 
-  // Tiny white pupils
-  const pupilGeo = new THREE.SphereGeometry(0.06, 8, 8);
-  const eyeL = new THREE.Mesh(pupilGeo, eyeMat);
+  // Pinprick pupils — asymmetric: one sits fractionally lower and dimmer,
+  // so the stare never quite focuses on you.
+  const eyeL = new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 8), eyeMat);
   eyeL.position.set(-0.35, 6.7, 0.98);
-  const eyeR = new THREE.Mesh(pupilGeo, eyeMat);
-  eyeR.position.set(0.35, 6.7, 0.98);
+  const eyeR = new THREE.Mesh(new THREE.SphereGeometry(0.048, 8, 8), eyeMat);
+  eyeR.position.set(0.35, 6.66, 0.98);
   torso.add(eyeL, eyeR);
 
-  // Wide unsettling grin — a dim ember of dried blood behind the teeth
+  // The grin: torn wider than the mask allows, curling up at both ends,
+  // with a dim ember of dried blood glowing behind the teeth.
   const mouthMat = glow(0x2a0806, 0.2);
-  const grinMesh = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.25, 0.2), mouthMat);
-  grinMesh.position.set(0, 6.1, 0.95);
+  const grinMesh = new THREE.Mesh(new THREE.BoxGeometry(1.06, 0.24, 0.2), mouthMat);
+  grinMesh.position.set(0, 6.08, 0.95);
   torso.add(grinMesh);
+  for (const sx of [-1, 1] as const) {
+    // Upturned grin corners slashed into the cheeks.
+    const corner = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.16), mouthMat);
+    corner.position.set(sx * 0.6, 6.2, 0.88);
+    corner.rotation.z = sx * 0.55;
+    torso.add(corner);
+    // Crude suture bars stitched across each torn corner.
+    for (let s = 0; s < 3; s++) {
+      const stitch = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.16, 0.02), crackMat);
+      stitch.position.set(sx * (0.52 + s * 0.11), 6.16 + s * 0.06, 0.99);
+      stitch.rotation.z = sx * -0.9;
+      torso.add(stitch);
+    }
+  }
 
-  // Crooked, uneven teeth — stained bone, each one slightly wrong.
+  // Crooked, uneven teeth — stained bone, longer than they should be, with
+  // two fangs dropping below the lip line and a black gap where one is gone.
   const toothMat = matte(0xcfc8b4, 0.9);
-  for (let i = 0; i < 7; i++) {
-    const tx = -0.4 + (i / 6) * 0.8;
-    const jag = i % 3 === 0 ? 0.05 : i % 2 === 0 ? -0.03 : 0.01;
-    const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22 + jag, 0.05), toothMat);
-    tooth.position.set(tx, 6.1 - jag * 0.5, 1.02);
-    tooth.rotation.z = i % 2 === 0 ? 0.07 : -0.05;
+  for (let i = 0; i < 9; i++) {
+    if (i === 6) continue; // the missing tooth
+    const tx = -0.48 + (i / 8) * 0.96;
+    const isFang = i === 1 || i === 7;
+    const jag = isFang ? 0.14 : i % 3 === 0 ? 0.05 : i % 2 === 0 ? -0.03 : 0.01;
+    const tooth = new THREE.Mesh(
+      new THREE.ConeGeometry(0.045, 0.24 + jag, 5),
+      toothMat,
+    );
+    tooth.rotation.x = Math.PI; // point downward
+    tooth.position.set(tx, 6.08 - jag * 0.5, 1.02);
+    tooth.rotation.z = i % 2 === 0 ? 0.09 : -0.06;
     torso.add(tooth);
   }
 
@@ -2102,17 +2199,27 @@ export function buildBloodBurst(count = 150): BloodBurst {
   const group = new THREE.Group();
   group.visible = false;
   const particles: BloodParticle[] = [];
-  const geo = new THREE.SphereGeometry(0.09, 6, 6);
+  // Three droplet sizes: a fine mist, mid spatter, and a few heavy gobs —
+  // teardrop-stretched so they read as flying liquid, not confetti.
+  const geoSmall = new THREE.SphereGeometry(0.05, 6, 6);
+  const geoMid = new THREE.SphereGeometry(0.09, 6, 6);
+  const geoBig = new THREE.SphereGeometry(0.14, 8, 6);
   for (let i = 0; i < count; i++) {
+    const roll = i % 10;
+    const geo = roll < 5 ? geoSmall : roll < 9 ? geoMid : geoBig;
     const mat = new THREE.MeshStandardMaterial({
-      color: PAL.blood,
+      // Vary from bright arterial red to near-black venous.
+      color: roll % 3 === 0 ? 0x8f0f0f : roll % 3 === 1 ? PAL.blood : 0x3d0505,
       emissive: 0x300000,
-      emissiveIntensity: 0.4,
-      roughness: 0.6,
+      emissiveIntensity: 0.35,
+      roughness: 0.25, // wet sheen
+      metalness: 0.05,
       transparent: true,
       opacity: 1,
     });
     const mesh = new THREE.Mesh(geo, mat);
+    // Random teardrop stretch — the renderer's ballistic update keeps it.
+    mesh.scale.set(1, 1.3 + Math.random() * 0.9, 1);
     mesh.visible = false;
     group.add(mesh);
     particles.push({ mesh, vel: new THREE.Vector3() });

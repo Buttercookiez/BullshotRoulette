@@ -420,7 +420,7 @@ export class Renderer3D implements IRenderer {
   private buildScene(): void {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PAL.void);
-    scene.fog = new THREE.FogExp2(PAL.fog, 0.038);
+    scene.fog = new THREE.FogExp2(PAL.fog, 0.046); // denser — the room edges drown sooner
 
     const camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 100);
     camera.position.copy(this.camPos);
@@ -431,17 +431,18 @@ export class Renderer3D implements IRenderer {
     if (this.renderer) {
       const pmrem = new THREE.PMREMGenerator(this.renderer);
       scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-      scene.environmentIntensity = 0.18;
+      scene.environmentIntensity = 0.12;
       pmrem.dispose();
     }
 
-    // --- Lighting: dim ambient + swinging bulb + a warm camera-side fill --
-    // (Ambient slightly lowered since the env map now contributes base light.)
-    scene.add(new THREE.AmbientLight(0x3a3034, 0.95));
+    // --- Lighting: dim ambient + swinging bulb + a faint camera-side fill --
+    // Kept deliberately starved: the bulb is the only thing keeping the dark
+    // at bay, and everything outside its pool should feel unsafe.
+    scene.add(new THREE.AmbientLight(0x2c2428, 0.7));
 
-    // A soft warm fill from the camera so the figures' fronts read (no shadow
-    // so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xffd9b0, 0.55);
+    // A faint, colder fill from the camera so the figures' fronts barely read
+    // (no shadow so it never fights the bulb's cast shadows).
+    const fill = new THREE.DirectionalLight(0xd9c9b0, 0.35);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
@@ -1980,7 +1981,9 @@ export class Renderer3D implements IRenderer {
 
     // --- Figures breathe / sway; eyes + grin shimmer --------------------
     if (this.dealer) {
-      const b = Math.sin(t * 1.3);
+      // Ragged, uneven breathing: a slow base wave with a shudder overlaid —
+      // it never settles into a rhythm you could get used to.
+      const b = Math.sin(t * 1.3) + Math.sin(t * 4.7) * 0.18;
       this.dealer.torso.rotation.x = b * 0.02 + this.flinch("AI");
       this.dealer.torso.position.y = b * 0.04;
       const shimmer = 2.2 + Math.sin(t * 3) * 0.4;
@@ -1988,6 +1991,18 @@ export class Renderer3D implements IRenderer {
       this.dealer.mouthMat.emissiveIntensity = 1.6 + Math.sin(t * 3 + 0.6) * 0.3;
       // Slow, wrong head-tracking: the torso turns a beat behind the room.
       this.dealer.torso.rotation.y = Math.sin(t * 0.23) * 0.14;
+      // Sudden neck-snap tic every ~17s: the head jerks hard to one side,
+      // holds for a beat, then eases back — with the eyes flaring while held.
+      const snapCycle = t % 17;
+      if (snapCycle > 14 && snapCycle < 15.4) {
+        const q = (snapCycle - 14) / 1.4;
+        const snap = q < 0.12 ? q / 0.12 : q > 0.7 ? (1 - q) / 0.3 : 1;
+        this.dealer.torso.rotation.z = 0.02 + snap * 0.22;
+        this.dealer.torso.rotation.y += snap * 0.3;
+        this.dealer.eyeMat.emissiveIntensity = shimmer + snap * 2.5;
+      } else {
+        this.dealer.torso.rotation.z = 0.02;
+      }
       // Idle tic: every so often the resting hand crawls up and scratches at
       // the neck — quick, fidgety, insect-like — then drops back down.
       if (this.dealer.restArm) {
@@ -2004,9 +2019,14 @@ export class Renderer3D implements IRenderer {
       }
     }
     if (this.player) {
-      const b = Math.sin(t * 1.3 + 1.1);
+      // The player's breathing is shallower and quicker — scared, not calm —
+      // with an occasional held breath (flat spot) before it resumes.
+      const held = (t % 11) > 9.2 ? 0.25 : 1;
+      const b = Math.sin(t * 1.7 + 1.1) * held + Math.sin(t * 5.3) * 0.1 * held;
       this.player.torso.rotation.x = b * 0.02 + this.flinch("PLAYER");
       this.player.torso.position.y = b * 0.035;
+      // A slight nervous rock side to side.
+      this.player.torso.rotation.z = Math.sin(t * 0.9 + 2.0) * 0.012;
     }
 
     // --- Eye + grin flare on shots/hits ----------------------------------
