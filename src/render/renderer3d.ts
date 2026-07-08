@@ -20,6 +20,7 @@
 //     in `./viewModel`, identical to the 2D renderer, so behaviour is testable.
 
 import * as THREE from "three";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { gsap } from "gsap";
 import type { Action, GameEvent, GameState, ItemType, ParticipantId } from "../engine/types";
 import {
@@ -111,7 +112,9 @@ interface Fx {
 // Scene geometry constants (positions reused by layout + camera director)
 // ---------------------------------------------------------------------------
 
-const DEALER_Z = -TABLE.depth / 2 - 2.2;
+// Pushed back from the table edge so the skull looms out of the dark, half
+// swallowed by fog, with only the clawed arms reaching into the light.
+const DEALER_Z = -TABLE.depth / 2 - 3.6;
 const PLAYER_Z = TABLE.depth / 2 + 2.2;
 const HP_ROW_Z = TABLE.depth * 0.44; // candles sit near each figure's edge
 const ITEM_ROW_Z = TABLE.depth * 0.25; // item boxes sit nearer the centre
@@ -198,6 +201,7 @@ export class Renderer3D implements IRenderer {
   private hallwayLight: THREE.SpotLight | undefined;
   private miniLamp: MiniLamp | undefined;
   private graveflies: Graveflies | undefined;
+  private puddleRipple: THREE.Mesh | undefined;
   private playerHp: HpMarker[] = [];
   private dealerHp: HpMarker[] = [];
   private playerSlots: ItemSlot[] = [];
@@ -419,49 +423,117 @@ export class Renderer3D implements IRenderer {
   private buildScene(): void {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PAL.void);
-    scene.fog = new THREE.FogExp2(PAL.fog, 0.038);
+    scene.fog = new THREE.FogExp2(PAL.fog, 0.065); // denser — the walls vanish into black
 
     const camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 100);
     camera.position.copy(this.camPos);
     camera.lookAt(this.camLook);
 
-    // --- Lighting: dim ambient + swinging bulb + a warm camera-side fill --
-    scene.add(new THREE.AmbientLight(0x3a3034, 1.15));
+    // --- Environment map: a very dim PMREM room so metals (revolver, table,
+    // shells, chips) pick up real reflections instead of reading flat black.
+    if (this.renderer) {
+      const pmrem = new THREE.PMREMGenerator(this.renderer);
+      scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environmentIntensity = 0.09;
+      pmrem.dispose();
+    }
 
-    // A soft warm fill from the camera so the figures' fronts read (no shadow
-    // so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xffd9b0, 0.55);
+    // --- Lighting: dim ambient + swinging bulb + a faint camera-side fill --
+    // Kept deliberately starved: the bulb is the only thing keeping the dark
+    // at bay, and everything outside its pool should feel unsafe.
+    scene.add(new THREE.AmbientLight(0x0e0b07, 0.22));
+
+    // A whisper of warm fill from the camera so the figures' fronts barely
+    // read (no shadow so it never fights the bulb's cast shadows).
+    const fill = new THREE.DirectionalLight(0xd8b468, 0.06);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    const bulb = new THREE.PointLight(0xffb060, 40, 34, 2);
+    // Warm incandescent bulb (~2400K amber): dim, tight falloff — a small
+    // pool of old tungsten lamplight in a room of black.
+    const bulb = new THREE.PointLight(0xffb454, 30, 22, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
     bulb.shadow.bias = -0.0005;
+    bulb.shadow.radius = 4; // soften the swinging-bulb shadow edges
     scene.add(bulb);
     this.bulb = bulb;
 
+    // Glass envelope: hot amber core reading through slightly smoked glass.
     const bulbMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.25, 16, 16),
       new THREE.MeshStandardMaterial({
-        color: 0xffd9a0,
-        emissive: 0xffb060,
-        emissiveIntensity: 3,
+        color: 0xffc880,
+        emissive: 0xffa040,
+        emissiveIntensity: 2.6,
+        transparent: true,
+        opacity: 0.92,
+        roughness: 0.15,
       }),
     );
+    // Glowing filament point inside the envelope — the hot spot your eye
+    // reads as "real bulb".
+    const filament = new THREE.Mesh(
+      new THREE.SphereGeometry(0.07, 8, 8),
+      new THREE.MeshStandardMaterial({
+        color: 0xffe8b0,
+        emissive: 0xffdc8a,
+        emissiveIntensity: 6,
+      }),
+    );
+    bulbMesh.add(filament);
+    // Soft warm halo sprite around the glass (fake volumetric glow).
+    const haloTex = (() => {
+      const c = document.createElement("canvas");
+      c.width = c.height = 64;
+      const ctx = c.getContext("2d")!;
+      const grad = ctx.createRadialGradient(32, 32, 2, 32, 32, 32);
+      grad.addColorStop(0, "rgba(255, 190, 110, 0.55)");
+      grad.addColorStop(0.4, "rgba(255, 160, 70, 0.22)");
+      grad.addColorStop(1, "rgba(255, 140, 50, 0)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 64, 64);
+      return new THREE.CanvasTexture(c);
+    })();
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: haloTex,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      }),
+    );
+    halo.scale.set(2.6, 2.6, 1);
+    bulbMesh.add(halo);
+    // Brass screw base instead of flat grey plastic.
     const bulbBase = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.12, 0.3, 8),
-      new THREE.MeshStandardMaterial({ color: 0x333333 })
+      new THREE.CylinderGeometry(0.11, 0.13, 0.3, 10),
+      new THREE.MeshStandardMaterial({ color: 0x6a5432, metalness: 0.8, roughness: 0.45 }),
     );
     bulbBase.position.y = 0.3;
     bulbMesh.add(bulbBase);
-    const shade = new THREE.Mesh(
+    // Shade: dark green-enamel outside, warm reflective inside — the inner
+    // face catches the bulb and bounces amber back down like a real fixture.
+    const shadeOuter = new THREE.Mesh(
       new THREE.ConeGeometry(1.4, 0.9, 16, 1, true),
-      new THREE.MeshStandardMaterial({ color: 0x1a1a1c, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({ color: 0x141810, roughness: 0.5, metalness: 0.4, side: THREE.FrontSide }),
     );
-    shade.position.y = 0.45;
-    bulbMesh.add(shade);
+    shadeOuter.position.y = 0.45;
+    bulbMesh.add(shadeOuter);
+    const shadeInner = new THREE.Mesh(
+      new THREE.ConeGeometry(1.38, 0.88, 16, 1, true),
+      new THREE.MeshStandardMaterial({
+        color: 0xc9a068,
+        roughness: 0.35,
+        metalness: 0.6,
+        emissive: 0x8a5c24,
+        emissiveIntensity: 0.35,
+        side: THREE.BackSide,
+      }),
+    );
+    shadeInner.position.y = 0.45;
+    bulbMesh.add(shadeInner);
 
     bulbMesh.position.copy(bulb.position);
     scene.add(bulbMesh);
@@ -474,19 +546,22 @@ export class Renderer3D implements IRenderer {
     cord.position.set(0, 13, 0);
     scene.add(cord);
 
-    // A faint cold rim from behind the dealer for separation.
-    const rim = new THREE.DirectionalLight(0x33405a, 0.45);
+    // A faint cold rim from behind the dealer for separation — kept barely
+    // there so it never reads as a blue cast.
+    const rim = new THREE.DirectionalLight(0x181410, 0.12);
     rim.position.set(-4, 8, -12);
     scene.add(rim);
 
-    // Harsh hallway light outside the cell door casting long bar shadows.
-    const hallwayLight = new THREE.SpotLight(0x8aabc9, 30, 40, Math.PI / 6, 0.5, 2);
+    // Dim hallway light outside the cell door casting long bar shadows —
+    // warmed and starved to a faint amber glimmer under the door.
+    const hallwayLight = new THREE.SpotLight(0x8a7048, 5, 40, Math.PI / 6, 0.5, 2);
     hallwayLight.position.set(-25, 6, -2);
     hallwayLight.target.position.set(0, 4, -2);
     scene.add(hallwayLight.target);
     hallwayLight.castShadow = true;
-    hallwayLight.shadow.mapSize.set(1024, 1024);
+    hallwayLight.shadow.mapSize.set(2048, 2048);
     hallwayLight.shadow.bias = -0.0005;
+    hallwayLight.shadow.radius = 3;
     scene.add(hallwayLight);
     this.hallwayLight = hallwayLight;
 
@@ -506,7 +581,9 @@ export class Renderer3D implements IRenderer {
     this.graveflies = flies;
 
     // --- World -----------------------------------------------------------
-    scene.add(buildRoom());
+    const room = buildRoom();
+    scene.add(room);
+    this.puddleRipple = room.getObjectByName("puddle-ripple") as THREE.Mesh | undefined;
     scene.add(buildTable());
 
     // --- Figures ---------------------------------------------------------
@@ -1952,22 +2029,26 @@ export class Renderer3D implements IRenderer {
         this.nextBlink = nowMs + 2600 + Math.random() * 5200;
         this.onBlink(); // play the flicker sound
       }
-      const intensity = 42 * waver * blinkMul;
+      // Base 30 matches the warm tungsten bulb set up in the constructor.
+      const intensity = 30 * waver * blinkMul;
       this.bulb.intensity = intensity;
       (this.bulbMesh.material as THREE.MeshStandardMaterial).emissiveIntensity =
-        0.15 + (intensity / 42) * 2.8;
+        0.15 + (intensity / 30) * 2.8;
     }
 
     if (this.hallwayLight) {
       const hWaver = 0.85 + 0.1 * Math.sin(t * 3.7) + 0.05 * Math.sin(t * 11.2);
       // occasional sharp flicker
       const hBlink = Math.random() < 0.02 ? 0.2 : 1.0;
-      this.hallwayLight.intensity = 30 * hWaver * hBlink;
+      // Base 5 keeps the hallway a faint amber glimmer under the door.
+      this.hallwayLight.intensity = 5 * hWaver * hBlink;
     }
 
     // --- Figures breathe / sway; eyes + grin shimmer --------------------
     if (this.dealer) {
-      const b = Math.sin(t * 1.3);
+      // Ragged, uneven breathing: a slow base wave with a shudder overlaid —
+      // it never settles into a rhythm you could get used to.
+      const b = Math.sin(t * 1.3) + Math.sin(t * 4.7) * 0.18;
       this.dealer.torso.rotation.x = b * 0.02 + this.flinch("AI");
       this.dealer.torso.position.y = b * 0.04;
       const shimmer = 2.2 + Math.sin(t * 3) * 0.4;
@@ -1975,8 +2056,22 @@ export class Renderer3D implements IRenderer {
       this.dealer.mouthMat.emissiveIntensity = 1.6 + Math.sin(t * 3 + 0.6) * 0.3;
       // Slow, wrong head-tracking: the torso turns a beat behind the room.
       this.dealer.torso.rotation.y = Math.sin(t * 0.23) * 0.14;
-      // Idle tic: every so often the resting hand crawls up and scratches at
-      // the neck — quick, fidgety, insect-like — then drops back down.
+      // Sudden neck-snap tic every ~17s: the head jerks hard to one side,
+      // holds for a beat, then eases back — with the eyes flaring while held.
+      const snapCycle = t % 17;
+      if (snapCycle > 14 && snapCycle < 15.4) {
+        const q = (snapCycle - 14) / 1.4;
+        const snap = q < 0.12 ? q / 0.12 : q > 0.7 ? (1 - q) / 0.3 : 1;
+        // Gentler on the giant skull: a hard cock of the head, not a whip.
+        this.dealer.torso.rotation.z = 0.02 + snap * 0.12;
+        this.dealer.torso.rotation.y += snap * 0.18;
+        this.dealer.eyeMat.emissiveIntensity = shimmer + snap * 2.5;
+      } else {
+        this.dealer.torso.rotation.z = 0.02;
+      }
+      // Idle tic: every so often the resting claw lifts slightly off the felt
+      // and rakes at the table — a low, scraping fidget (the old "scratch at
+      // the neck" raise made the claw float in mid-air on the new skull body).
       if (this.dealer.restArm) {
         const cycle = t % 13;
         const inWindow = cycle > 8 && cycle < 10.6;
@@ -1985,15 +2080,34 @@ export class Renderer3D implements IRenderer {
           const q = (cycle - 8) / 2.6;
           raise = q < 0.2 ? q / 0.2 : q > 0.85 ? (1 - q) / 0.15 : 1;
         }
-        const scratch = raise * Math.sin(t * 21) * 0.14;
-        this.dealer.restArm.rotation.x = -1.15 - raise * 1.35 + scratch;
-        this.dealer.restArm.rotation.z = -0.2 - raise * 0.5 + scratch * 0.5;
+        const scratch = raise * Math.sin(t * 18) * 0.06;
+        // When not scraping, the claws slow-drum on the felt: a staggered
+        // micro-oscillation rolling through the resting hand.
+        const drum = (1 - raise) * Math.sin(t * 5.2) * Math.max(0, Math.sin(t * 0.7)) * 0.035;
+        this.dealer.restArm.rotation.x = -1.15 - raise * 0.22 + scratch + drum;
+        this.dealer.restArm.rotation.z = -0.32 - raise * 0.1 + scratch * 0.4 + drum * 0.3;
+      }
+      // Slow lean-in: every ~25s the skull creeps toward the player over a
+      // few seconds, holds, then snaps back in an instant.
+      const leanCycle = t % 25;
+      if (leanCycle > 19 && leanCycle < 24) {
+        const q = (leanCycle - 19) / 5;
+        const lean = q < 0.6 ? q / 0.6 : q > 0.96 ? 0 : 1; // creep, hold, snap back
+        this.dealer.torso.position.z = lean * 0.55;
+        this.dealer.torso.rotation.x += lean * 0.06;
+      } else {
+        this.dealer.torso.position.z = 0;
       }
     }
     if (this.player) {
-      const b = Math.sin(t * 1.3 + 1.1);
+      // The player's breathing is shallower and quicker — scared, not calm —
+      // with an occasional held breath (flat spot) before it resumes.
+      const held = (t % 11) > 9.2 ? 0.25 : 1;
+      const b = Math.sin(t * 1.7 + 1.1) * held + Math.sin(t * 5.3) * 0.1 * held;
       this.player.torso.rotation.x = b * 0.02 + this.flinch("PLAYER");
       this.player.torso.position.y = b * 0.035;
+      // A slight nervous rock side to side.
+      this.player.torso.rotation.z = Math.sin(t * 0.9 + 2.0) * 0.012;
     }
 
     // --- Eye + grin flare on shots/hits ----------------------------------
@@ -2291,6 +2405,14 @@ export class Renderer3D implements IRenderer {
     }
 
     // --- Graveflies swarm + blink under the lamp ------------------------
+    // A drip hits the big puddle every ~4s: the ring expands and fades.
+    if (this.puddleRipple) {
+      const q = (t % 4.2) / 4.2;
+      const sc = 0.15 + q * 1.1;
+      this.puddleRipple.scale.set(sc, sc, 1);
+      (this.puddleRipple.material as THREE.MeshBasicMaterial).opacity =
+        q < 0.08 ? (q / 0.08) * 0.35 : 0.35 * (1 - (q - 0.08) / 0.92);
+    }
     if (this.graveflies) {
       for (const f of this.graveflies.flies) {
         const a = t * f.speed + f.phase;

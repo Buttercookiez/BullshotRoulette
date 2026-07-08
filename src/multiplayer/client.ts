@@ -36,6 +36,8 @@ export interface MultiplayerConfig {
   /** Called each second with the active turn's remaining time. */
   onTimerTick: (secondsLeft: number) => void;
   onMatchOver: (youWon: boolean) => void;
+  /** Called when the opponent sends a chat message. */
+  onChat?: (text: string) => void;
 }
 
 const QUEUE_POLL_MS = 2000;
@@ -58,6 +60,8 @@ export class MultiplayerClient {
   private lastEventSeq = 0;
   private matchOverFired = false;
   private destroyed = false;
+  /** Realtime broadcast channel used for in-match chat. */
+  private chatChannel: ReturnType<SupabaseClient["channel"]> | null = null;
 
   private config: MultiplayerConfig;
 
@@ -218,11 +222,26 @@ export class MultiplayerClient {
     return !data.coin_pick; // forced to the opposite of the opponent
   }
 
+  /** Send a chat message to the opponent over the match's Realtime channel. */
+  sendChat(text: string): void {
+    const clean = text.trim().slice(0, 200);
+    if (!clean || !this.chatChannel) return;
+    this.chatChannel.send({
+      type: "broadcast",
+      event: "chat",
+      payload: { from: this.playerId, text: clean },
+    });
+  }
+
   /** Tear down all timers and channels. */
   destroy(): void {
     this.destroyed = true;
     this.clearQueuePoll();
     if (this.matchPollTimer) clearInterval(this.matchPollTimer);
+    if (this.chatChannel) {
+      this.supabase.removeChannel(this.chatChannel);
+      this.chatChannel = null;
+    }
     this.stopTimer();
   }
 
@@ -273,6 +292,16 @@ export class MultiplayerClient {
       initialState: match.state as GameState,
       initialEvents: (match.last_events ?? []) as GameEvent[],
     });
+
+    // Join the match chat channel; only surface the OPPONENT's messages.
+    this.chatChannel = this.supabase.channel(`chat:${matchId}`);
+    this.chatChannel.on("broadcast", { event: "chat" }, (payload) => {
+      const msg = payload.payload as { from?: string; text?: string };
+      if (msg?.from && msg.from !== this.playerId && msg.text) {
+        this.config.onChat?.(String(msg.text).slice(0, 200));
+      }
+    });
+    this.chatChannel.subscribe();
 
     this.startMatchPoll(matchId);
   }
