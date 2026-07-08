@@ -1235,16 +1235,16 @@ export function buildDealer(): FigureHandles {
   // reaching forward so the claws rest on the table. Same rest rotations
   // (x=-1.15, z=±0.2) so all renderer arm animations keep working.
   const restArm = buildMonsterArm(hide, 1.45, true, hideDark);
-  restArm.position.set(2.05, 4.0, 0.5);
+  restArm.position.set(2.3, 4.4, 0.9);
   restArm.rotation.x = -1.15;
-  restArm.rotation.z = -0.2;
+  restArm.rotation.z = -0.42; // splayed wide like the reference stance
   torso.add(restArm);
 
   const arm = buildMonsterArm(hide, 1.45, false, hideDark);
-  arm.position.set(-2.05, 4.0, 0.5);
+  arm.position.set(-2.3, 4.4, 0.9);
   const armRestX = -1.15;
   arm.rotation.x = armRestX;
-  arm.rotation.z = 0.2;
+  arm.rotation.z = 0.42;
   torso.add(arm);
 
   group.add(torso);
