@@ -192,18 +192,53 @@ export class MultiplayerClient {
    */
   async submitCoinPick(pick: boolean): Promise<{ myPick: boolean; coinResult: boolean; youFirst: boolean; newState?: any }> {
     if (!this.matchId) return { myPick: pick, coinResult: pick, youFirst: true };
-    const { data, error } = await this.supabase.functions.invoke("coin-pick", {
+
+    // Record the claim server-side (first-come-first-serve). We do NOT trust
+    // the function's response for the outcome — only for recording the pick.
+    await this.supabase.functions.invoke("coin-pick", {
       body: { match_id: this.matchId, player_id: this.playerId, pick },
-    });
-    if (error || data?.error || !data) {
-      console.warn("[multiplayer] coin-pick error:", error?.message ?? data?.error);
-      return { myPick: pick, coinResult: pick, youFirst: true };
+    }).catch(() => {});
+
+    // AUTHORITATIVE RESOLUTION: read the committed match row directly.
+    // Both clients read the SAME row and run the SAME math, so they can
+    // never disagree on who goes first — regardless of function race bugs.
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const { data: row } = await this.supabase
+        .from("matches")
+        .select("coin_pick_by, coin_pick, coin_result, player1_id, player2_id, state")
+        .eq("id", this.matchId)
+        .maybeSingle();
+      if (row?.coin_pick_by != null && row.coin_pick != null) {
+        const firstPickBy: string = row.coin_pick_by;
+        const firstPick: boolean = row.coin_pick;
+        const coinResult: boolean = row.coin_result ?? true;
+        // My effective side: the claimer keeps their pick; the other player
+        // is forced to the opposite.
+        const myPick = firstPickBy === this.playerId ? firstPick : !firstPick;
+        // The player whose side matches the landing face goes first.
+        const otherOfPicker = firstPickBy === row.player1_id ? row.player2_id : row.player1_id;
+        const winnerId = firstPick === coinResult ? firstPickBy : otherOfPicker;
+        const youFirst = winnerId === this.playerId;
+        // Patch the board state with the computed first turn so the UI's
+        // notion of whose turn it is matches the caption we show.
+        const activeParticipant = winnerId === row.player1_id ? "PLAYER" : "AI";
+        const newState = row.state ? { ...(row.state as GameState), activeParticipant } : undefined;
+        return { myPick, coinResult, youFirst, newState };
+      }
+      await new Promise((r) => setTimeout(r, 500));
     }
+
+    // Extreme fallback (row never got a claim): derive from first_turn.
+    console.warn("[multiplayer] coin claim never appeared; falling back to first_turn");
+    const { data: m } = await this.supabase
+      .from("matches")
+      .select("first_turn, coin_result")
+      .eq("id", this.matchId)
+      .maybeSingle();
     return {
-      myPick: data.my_pick,
-      coinResult: data.coin_result,
-      youFirst: data.first_turn === this.youAre,
-      newState: data.state,
+      myPick: pick,
+      coinResult: m?.coin_result ?? true,
+      youFirst: (m?.first_turn ?? "player1") === this.youAre,
     };
   }
 

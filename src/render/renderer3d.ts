@@ -1677,7 +1677,7 @@ export class Renderer3D implements IRenderer {
             timerEl.style.color = "#cc3333";
             timerEl.style.fontSize = "16px";
             timerEl.textContent = `OPPONENT FASTER — FORCED TO ${res.myPick ? "HEADS" : "TAILS"}`;
-            await new Promise((r) => setTimeout(r, 900));
+            await new Promise((r) => setTimeout(r, 500));
           }
           playerPick = res.myPick;
           youFirstResult = res.youFirst;
@@ -1721,8 +1721,9 @@ export class Renderer3D implements IRenderer {
           takenBtn.style.borderColor = "#555";
           takenBtn.disabled = true;
           timerEl.textContent = `OPPONENT CHOSE ${forced ? "TAILS" : "HEADS"} — YOU GET ${forced ? "HEADS" : "TAILS"}`;
-          // Brief pause so the user can read, then auto-lock.
-          setTimeout(() => { void lockPick(forced); }, 1200);
+          // Short pause so the user can read, then auto-lock. Kept tight so
+          // both clients start the flip animation nearly simultaneously.
+          setTimeout(() => { void lockPick(forced); }, 400);
         }, 600);
       }
 
