@@ -2198,17 +2198,18 @@ export class Renderer3D implements IRenderer {
         // "Aiming at the local player" == aiming at localParticipant.
         const da = this.dealerAimT;
         const aimingAtLocalPlayer = this.aiAimingTarget === this.localParticipant;
-        if (aimingAtLocalPlayer) {
-          // Opponent aims across the table at US — gun lifts toward camera.
+        if (!aimingAtLocalPlayer) {
+          // Opponent aims across the table at US — gun lifts toward camera
+          // (they're shooting at the OTHER player, which is us from our seat).
           targetPy += da * 1.6;
           targetPz -= da * 2.2;
           targetRx = da * -0.32 - recoilPitch;
           targetRy = -0.5 + da * (Math.PI + 0.5);
           targetRz = da * (Math.PI / 2);
         } else {
-          // Opponent aims at themselves (self-shot).
+          // Opponent aims at themselves (self-shot) — gun points backward at their own seat.
           targetPy += da * 2.0;
-          targetPz -= da * 1.4;
+          targetPz += da * 1.4;
           targetRx = da * 0.7 + recoilPitch;
           targetRy = -0.5 + da * 0.5;
           targetRz = da * (Math.PI / 2);
