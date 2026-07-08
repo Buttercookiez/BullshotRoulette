@@ -52,14 +52,15 @@ serve(async (req: Request) => {
       await supabase.from("players").insert({ id: player_id, display_name: "PLAYER", balance: 100000 });
     }
 
-    // --- TEMPORARY FIX: WIPE STALE MATCHES ---
-    // Since matches were getting stuck in "active" before the abandonment fix,
-    // we automatically clear any active matches for this player before they queue up again.
-    await supabase.from("matches")
-      .delete()
+    // Clean up stale matches for this player — only ones older than 5 minutes
+    // so a live game the opponent is still in is never destroyed mid-turn.
+    const staleThreshold = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await supabase
+      .from("matches")
+      .update({ status: "abandoned" })
       .eq("status", "active")
+      .lt("created_at", staleThreshold)
       .or(`player1_id.eq.${player_id},player2_id.eq.${player_id}`);
-    // -----------------------------------------
 
     // Insert into queue (skip balance check for now).
     const { data: queueEntry } = await supabase

@@ -117,7 +117,7 @@ export class MultiplayerClient {
     this.queuePollTimer = setInterval(async () => {
       if (this.destroyed) return;
 
-      // 1. Check if we're in an active match
+      // 1. Check if we're in a live (non-abandoned) active match.
       const { data: match } = await this.supabase
         .from("matches")
         .select("id, state")
@@ -171,8 +171,9 @@ export class MultiplayerClient {
     const seq = data?.event_seq as number | undefined;
     if (typeof seq === "number") this.lastEventSeq = Math.max(this.lastEventSeq, seq);
 
-    if (data?.state) this.applyServerRow(data.state as GameState, data.turn_deadline ?? null);
+    // Events first — animations play against the pre-shot state.
     if (data?.events?.length) this.config.onEvents(data.events as GameEvent[]);
+    if (data?.state) this.applyServerRow(data.state as GameState, data.turn_deadline ?? null);
 
     this.checkMatchOver(data?.state as GameState | undefined);
   }
@@ -320,10 +321,11 @@ export class MultiplayerClient {
       const seq = (row.event_seq ?? 0) as number;
       if (seq > this.lastEventSeq) {
         this.lastEventSeq = seq;
-        // Replay the authoritative events FIRST (so captions/animations know the
-        // pre-shot state), then commit the new state.
-        this.applyServerRow(row.state as GameState, row.turn_deadline ?? null);
+        // Fire events FIRST so shot animations and audio play against the
+        // PRE-shot state (HP bars / phase haven't jumped yet). State commits
+        // after, which updates the board visuals.
         if (row.last_events?.length) this.config.onEvents(row.last_events as GameEvent[]);
+        this.applyServerRow(row.state as GameState, row.turn_deadline ?? null);
         this.checkMatchOver(row.state as GameState);
       }
 

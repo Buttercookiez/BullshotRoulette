@@ -32,31 +32,133 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
 
   let cancelled = false;
   let matchStarted = false;
+  let matchEnded = false;
 
   caption.enqueue("SEARCHING", "Looking for an opponent...");
 
-  // Turn-timer readout (top-right), only visible in the final 10 seconds.
+  // --- Disconnect indicator (top-centre) — shown when opponent goes silent --
+  const disconnectEl = document.createElement("div");
+  disconnectEl.style.cssText =
+    "position:fixed;top:16px;left:50%;transform:translateX(-50%);" +
+    "font-family:'Courier New',monospace;font-size:11px;letter-spacing:4px;" +
+    "text-transform:uppercase;color:#6a5248;z-index:9999;pointer-events:none;" +
+    "opacity:0;transition:opacity 0.6s;";
+  disconnectEl.textContent = "OPPONENT MAY HAVE DISCONNECTED";
+  document.body.appendChild(disconnectEl);
+
+  // --- Post-match overlay: WIN / LOSE result + back-to-menu button ---------
+  const resultEl = document.createElement("div");
+  resultEl.style.cssText =
+    "position:fixed;inset:0;display:none;flex-direction:column;align-items:center;" +
+    "justify-content:center;gap:28px;z-index:10000;background:rgba(4,3,4,0.88);" +
+    "font-family:'Courier New',monospace;";
+  const resultTitle = document.createElement("div");
+  resultTitle.style.cssText =
+    "font-size:clamp(40px,7vw,72px);font-weight:900;letter-spacing:16px;" +
+    "text-transform:uppercase;";
+  const resultSub = document.createElement("div");
+  resultSub.style.cssText =
+    "font-size:13px;letter-spacing:5px;color:#6a6258;text-transform:uppercase;";
+  const backBtn = document.createElement("button");
+  backBtn.textContent = "BACK TO MENU";
+  backBtn.style.cssText =
+    "font-family:'Courier New',monospace;font-size:14px;font-weight:700;" +
+    "letter-spacing:8px;text-transform:uppercase;color:#8a8276;" +
+    "background:transparent;border:1px solid #2e2a26;padding:14px 32px;" +
+    "cursor:pointer;margin-top:12px;transition:color 0.2s,border-color 0.2s;";
+  backBtn.addEventListener("mouseenter", () => {
+    backBtn.style.color = "#c02020";
+    backBtn.style.borderColor = "#4a1010";
+  });
+  backBtn.addEventListener("mouseleave", () => {
+    backBtn.style.color = "#8a8276";
+    backBtn.style.borderColor = "#2e2a26";
+  });
+  backBtn.addEventListener("click", () => {
+    // Tear everything down and show the landing page again.
+    cleanup();
+    const homeOverlay = document.getElementById("landing-page");
+    if (homeOverlay) homeOverlay.classList.remove("rr-hidden");
+  });
+  resultEl.appendChild(resultTitle);
+  resultEl.appendChild(resultSub);
+  resultEl.appendChild(backBtn);
+  document.body.appendChild(resultEl);
+
+  const showResult = (youWon: boolean): void => {
+    resultTitle.textContent = youWon ? "YOU WIN" : "YOU LOSE";
+    resultTitle.style.color = youWon ? "#c8b8a8" : "#a01818";
+    resultSub.textContent = youWon ? "The pot is yours." : "Better luck next time.";
+    resultEl.style.display = "flex";
+  };
+
+  const cleanup = (): void => {
+    cancelled = true;
+    controller.dispose();
+    [timerWrap, chatEl, disconnectEl, resultEl].forEach((el) => {
+      if (el.parentNode) el.parentNode.removeChild(el);
+    });
+  };
+
+  // Turn-timer readout + progress bar (top-right).
+  // The number appears only in the final 10s; the bar drains the whole 30s.
+  const timerWrap = document.createElement("div");
+  timerWrap.style.cssText =
+    "position:fixed;top:16px;right:18px;display:flex;flex-direction:column;" +
+    "align-items:flex-end;gap:5px;z-index:9999;pointer-events:none;" +
+    "opacity:0;transition:opacity 0.3s;";
   const timerEl = document.createElement("div");
   timerEl.style.cssText =
-    "position:fixed;top:20px;right:20px;font-family:'Courier New',monospace;" +
-    "font-size:28px;font-weight:700;letter-spacing:4px;color:#cc3333;" +
-    "z-index:9999;pointer-events:none;opacity:0;transition:opacity 0.3s;";
-  document.body.appendChild(timerEl);
+    "font-family:'Courier New',monospace;font-size:28px;font-weight:700;" +
+    "letter-spacing:4px;color:#cc3333;line-height:1;";
+  const timerBar = document.createElement("div"); // track
+  timerBar.style.cssText =
+    "width:120px;height:2px;background:rgba(80,30,30,0.35);overflow:hidden;";
+  const timerFill = document.createElement("div"); // fill
+  timerFill.style.cssText =
+    "height:100%;width:100%;background:#a01818;transform-origin:right;" +
+    "transition:transform 1s linear,background 1s;";
+  timerBar.appendChild(timerFill);
+  timerWrap.appendChild(timerEl);
+  timerWrap.appendChild(timerBar);
+  document.body.appendChild(timerWrap);
 
   // --- Chat box (bottom-left): minimalist horror styling ------------------
   const chatEl = document.createElement("div");
   chatEl.style.cssText =
     "position:fixed;bottom:20px;left:20px;width:300px;z-index:9998;display:none;" +
     "flex-direction:column;gap:6px;font-family:'Courier New',monospace;";
+
+  // Quick-chat preset buttons row.
+  const quickRow = document.createElement("div");
+  quickRow.style.cssText = "display:flex;gap:4px;flex-wrap:wrap;";
+  const QUICK_PHRASES = ["nice shot", "your move", "good luck", "ha."];
+  for (const phrase of QUICK_PHRASES) {
+    const qb = document.createElement("button");
+    qb.textContent = phrase;
+    qb.style.cssText =
+      "font-family:'Courier New',monospace;font-size:10px;letter-spacing:1px;" +
+      "color:#6a6258;background:rgba(5,4,5,0.82);border:1px solid #1e1a18;" +
+      "padding:4px 8px;cursor:pointer;text-transform:uppercase;" +
+      "transition:color 0.15s,border-color 0.15s;";
+    qb.addEventListener("mouseenter", () => { qb.style.color = "#b8b0a0"; qb.style.borderColor = "#4a1010"; });
+    qb.addEventListener("mouseleave", () => { qb.style.color = "#6a6258"; qb.style.borderColor = "#1e1a18"; });
+    qb.addEventListener("click", () => {
+      controller.sendChat(phrase);
+      pushChatLine("YOU", phrase);
+    });
+    quickRow.appendChild(qb);
+  }
+
   const chatLog = document.createElement("div");
   chatLog.style.cssText =
-    "max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;" +
+    "max-height:140px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;" +
     "padding:8px;background:rgba(5,4,5,0.82);border:1px solid #1e1a18;" +
     "border-left:2px solid #4a1010;scrollbar-width:thin;";
   const chatInput = document.createElement("input");
   chatInput.type = "text";
   chatInput.maxLength = 200;
-  chatInput.placeholder = "say something...";
+  chatInput.placeholder = "or type something...";
   chatInput.setAttribute("aria-label", "Chat message");
   chatInput.style.cssText =
     "background:rgba(5,4,5,0.82);border:1px solid #1e1a18;color:#b8b0a0;" +
@@ -64,6 +166,7 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
     "padding:8px 10px;outline:none;";
   chatInput.addEventListener("focus", () => (chatInput.style.borderColor = "#4a1010"));
   chatInput.addEventListener("blur", () => (chatInput.style.borderColor = "#1e1a18"));
+  chatEl.appendChild(quickRow);
   chatEl.appendChild(chatLog);
   chatEl.appendChild(chatInput);
   document.body.appendChild(chatEl);
@@ -148,22 +251,49 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
     },
 
     onMatchOver: (youWon) => {
-      if (cancelled) return;
-      timerEl.style.opacity = "0";
+      if (cancelled || matchEnded) return;
+      matchEnded = true;
+      timerWrap.style.opacity = "0";
+      disconnectEl.style.opacity = "0";
+      // Show the result overlay (with back-to-menu button) after a short delay
+      // so the death animation has time to play.
+      setTimeout(() => {
+        if (!cancelled) showResult(youWon);
+      }, 5500);
       onMatchEnd(youWon);
     },
 
     onTimerTick: (secondsLeft) => {
       if (cancelled || !matchStarted) return;
+      // Heartbeat: server is alive while ticks arrive.
+      lastTickMs = Date.now();
+      disconnectEl.style.opacity = "0";
+      // Bar always visible once match starts; drains over 30s.
+      const TURN_SECS = 30;
+      const pct = Math.max(0, secondsLeft / TURN_SECS);
+      timerWrap.style.opacity = "1";
+      timerFill.style.transform = `scaleX(${pct})`;
+      const isRed = secondsLeft <= 5;
+      timerFill.style.background = isRed ? "#cc2020" : "#a01818";
+      // Number only appears in the last 10s.
       if (secondsLeft <= 10) {
         timerEl.style.opacity = "1";
         timerEl.textContent = String(secondsLeft);
-        timerEl.style.color = secondsLeft <= 5 ? "#ff0000" : "#cc3333";
+        timerEl.style.color = isRed ? "#ff0000" : "#cc3333";
       } else {
         timerEl.style.opacity = "0";
       }
     },
   });
+
+  // Disconnect watchdog: if no tick arrives for 20s while a match is live,
+  // surface the indicator so the player knows the opponent may have left.
+  let lastTickMs = Date.now();
+  const disconnectWatchdog = setInterval(() => {
+    if (!matchStarted || matchEnded || cancelled) return;
+    const silentMs = Date.now() - lastTickMs;
+    disconnectEl.style.opacity = silentMs > 20_000 ? "1" : "0";
+  }, 4000);
 
   // Wire the shared presentation pipeline (identical to single-player).
   wire(controller);
@@ -176,10 +306,8 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
 
   return {
     cancel: () => {
-      cancelled = true;
-      controller.dispose();
-      if (timerEl.parentNode) timerEl.parentNode.removeChild(timerEl);
-      if (chatEl.parentNode) chatEl.parentNode.removeChild(chatEl);
+      clearInterval(disconnectWatchdog);
+      cleanup();
     },
     submitAction: (action: Action) => {
       if (!matchStarted || cancelled) return;

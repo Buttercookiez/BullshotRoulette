@@ -1639,12 +1639,27 @@ export class Renderer3D implements IRenderer {
       timerEl.textContent = "CHOOSE: 10";
       document.body.appendChild(timerEl);
 
-      // Lock in a pick. The coin flip will wait for the timer.
+      // Lock in a pick.
+      // In multiplayer: once the pick resolves we know youFirstResult and fire
+      // doFlip immediately — no waiting for the countdown. Both clients call
+      // the server in parallel; the server's first-come-first-serve logic
+      // guarantees they agree on who wins.
+      let flipTriggered = false;
+      const triggerFlip = (): void => {
+        if (flipTriggered) return;
+        flipTriggered = true;
+        clearInterval(interval);
+        if (pollInt !== null) { clearInterval(pollInt); pollInt = null; }
+        choiceEl.remove();
+        timerEl.remove();
+        doFlip();
+      };
+
       const lockPick = async (pick: boolean): Promise<void> => {
         if (decided) return;
         decided = true;
-        
-        // Highlight chosen, disable both
+
+        // Highlight chosen, disable both.
         headsBtn.style.opacity = pick ? "1" : "0.35";
         tailsBtn.style.opacity = pick ? "0.35" : "1";
         headsBtn.disabled = true;
@@ -1653,20 +1668,25 @@ export class Renderer3D implements IRenderer {
         tailsBtn.style.borderColor = pick ? "#555" : "#fff";
 
         if (choice) {
+          // Await the server: this sets youFirstResult BEFORE doFlip runs so
+          // the resolve() at the end of doFlip sees the correct value.
+          timerEl.textContent = "LOCKING IN...";
           const res = await choice.submitPick(pick);
           if (res.myPick !== pick) {
             timerEl.style.color = "#cc3333";
             timerEl.style.fontSize = "16px";
-            timerEl.textContent = `OPPONENT FASTER! FORCED TO ${res.myPick ? "HEADS" : "TAILS"} (WAITING)`;
-          } else {
-            timerEl.textContent = "WAITING FOR TIMER...";
+            timerEl.textContent = `OPPONENT FASTER — FORCED TO ${res.myPick ? "HEADS" : "TAILS"}`;
+            await new Promise((r) => setTimeout(r, 900));
           }
           playerPick = res.myPick;
           youFirstResult = res.youFirst;
+          // Both players picked — fire immediately.
+          triggerFlip();
         } else {
           playerPick = pick;
           youFirstResult = pick === result;
-          timerEl.textContent = "WAITING FOR TIMER...";
+          // Single-player: also fire immediately.
+          triggerFlip();
         }
       };
 
@@ -1676,39 +1696,32 @@ export class Renderer3D implements IRenderer {
       let countdown = 10;
       const interval = setInterval(() => {
         countdown--;
-        if (!decided) {
-          timerEl.textContent = `CHOOSE: ${countdown}`;
-        } else if (timerEl.textContent.includes("WAITING FOR TIMER")) {
-          timerEl.textContent = `WAITING FOR TIMER... ${countdown}`;
-        }
-        
+        if (!decided) timerEl.textContent = `CHOOSE: ${countdown}`;
+
         if (countdown <= 0) {
-          clearInterval(interval);
-          if (pollInt !== null) clearInterval(pollInt);
-          if (!decided) void lockPick(true); // default heads
-          
-          choiceEl.remove();
-          timerEl.remove();
-          doFlip();
+          // Time expired without a pick — default to heads then trigger.
+          if (!decided) void lockPick(true);
+          // If lockPick already decided but flip not triggered yet, force it.
+          else triggerFlip();
         }
       }, 1000);
 
       // Multiplayer: watch for the opponent claiming a side first, then lock
-      // this player to the opposite one (first-come-first-serve).
+      // this player to the opposite side (first-come-first-serve).
       let pollInt: ReturnType<typeof setInterval> | null = null;
       if (choice) {
         pollInt = setInterval(async () => {
           if (decided) return;
           const forced = await choice.pollLock();
           if (forced === null || decided) return;
-          // The opponent took the other side; disable it and lock ours in.
+          // The opponent took a side; disable it and show which side we get.
           const takenBtn = forced ? tailsBtn : headsBtn;
           takenBtn.style.opacity = "0.35";
           takenBtn.style.borderColor = "#555";
           takenBtn.disabled = true;
           timerEl.textContent = `OPPONENT CHOSE ${forced ? "TAILS" : "HEADS"} — YOU GET ${forced ? "HEADS" : "TAILS"}`;
-          // Give the user an extra second to read this text before locking.
-          setTimeout(() => { void lockPick(forced); }, 2200);
+          // Brief pause so the user can read, then auto-lock.
+          setTimeout(() => { void lockPick(forced); }, 1200);
         }, 600);
       }
 
