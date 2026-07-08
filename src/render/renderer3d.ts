@@ -421,7 +421,7 @@ export class Renderer3D implements IRenderer {
   private buildScene(): void {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(PAL.void);
-    scene.fog = new THREE.FogExp2(PAL.fog, 0.052); // dense — the walls barely read
+    scene.fog = new THREE.FogExp2(PAL.fog, 0.065); // denser — the walls vanish into black
 
     const camera = new THREE.PerspectiveCamera(45, this.width / this.height, 0.1, 100);
     camera.position.copy(this.camPos);
@@ -439,15 +439,17 @@ export class Renderer3D implements IRenderer {
     // --- Lighting: dim ambient + swinging bulb + a faint camera-side fill --
     // Kept deliberately starved: the bulb is the only thing keeping the dark
     // at bay, and everything outside its pool should feel unsafe.
-    scene.add(new THREE.AmbientLight(0x241d20, 0.55));
+    scene.add(new THREE.AmbientLight(0x14100e, 0.35));
 
-    // A faint, colder fill from the camera so the figures' fronts barely read
-    // (no shadow so it never fights the bulb's cast shadows).
-    const fill = new THREE.DirectionalLight(0xd9c9b0, 0.22);
+    // A whisper of warm fill from the camera so the figures' fronts barely
+    // read (no shadow so it never fights the bulb's cast shadows).
+    const fill = new THREE.DirectionalLight(0xc9a070, 0.1);
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    const bulb = new THREE.PointLight(0xffb060, 40, 34, 2);
+    // Deeper amber bulb — dimmer, warmer, tighter falloff: a small pool of
+    // candlelight-orange in a room of black.
+    const bulb = new THREE.PointLight(0xff9040, 26, 24, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
@@ -459,9 +461,9 @@ export class Renderer3D implements IRenderer {
     const bulbMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.25, 16, 16),
       new THREE.MeshStandardMaterial({
-        color: 0xffd9a0,
-        emissive: 0xffb060,
-        emissiveIntensity: 3,
+        color: 0xffc080,
+        emissive: 0xff9040,
+        emissiveIntensity: 2.4,
       }),
     );
     const bulbBase = new THREE.Mesh(
@@ -490,12 +492,13 @@ export class Renderer3D implements IRenderer {
 
     // A faint cold rim from behind the dealer for separation — kept barely
     // there so it never reads as a blue cast.
-    const rim = new THREE.DirectionalLight(0x2e3442, 0.3);
+    const rim = new THREE.DirectionalLight(0x1e2028, 0.18);
     rim.position.set(-4, 8, -12);
     scene.add(rim);
 
-    // Harsh hallway light outside the cell door casting long bar shadows.
-    const hallwayLight = new THREE.SpotLight(0x6f8496, 18, 40, Math.PI / 6, 0.5, 2);
+    // Dim hallway light outside the cell door casting long bar shadows —
+    // reduced to a sickly glimmer so the room stays swallowed in black.
+    const hallwayLight = new THREE.SpotLight(0x54626e, 8, 40, Math.PI / 6, 0.5, 2);
     hallwayLight.position.set(-25, 6, -2);
     hallwayLight.target.position.set(0, 4, -2);
     scene.add(hallwayLight.target);
