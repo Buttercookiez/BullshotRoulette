@@ -1234,17 +1234,26 @@ export function buildDealer(): FigureHandles {
   // --- Arms: emaciated limbs growing straight out of the skull's sides,
   // reaching forward so the claws rest on the table. Same rest rotations
   // (x=-1.15, z=±0.2) so all renderer arm animations keep working.
+  // Flesh shoulder masses bulging out of the skull where the arms sprout,
+  // so the limbs read as GROWING from the head rather than floating beside it.
+  for (const sx of [-1, 1] as const) {
+    const shoulderMass = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 10), hide);
+    shoulderMass.scale.set(1.15, 0.9, 1);
+    shoulderMass.position.set(sx * 2.05, 4.35, 0.55);
+    torso.add(shoulderMass);
+  }
+
   const restArm = buildMonsterArm(hide, 1.45, true, hideDark);
-  restArm.position.set(2.3, 4.4, 0.9);
+  restArm.position.set(2.25, 4.3, 0.75);
   restArm.rotation.x = -1.15;
-  restArm.rotation.z = -0.42; // splayed wide like the reference stance
+  restArm.rotation.z = -0.32; // splayed like the reference stance
   torso.add(restArm);
 
   const arm = buildMonsterArm(hide, 1.45, false, hideDark);
-  arm.position.set(-2.3, 4.4, 0.9);
+  arm.position.set(-2.25, 4.3, 0.75);
   const armRestX = -1.15;
   arm.rotation.x = armRestX;
-  arm.rotation.z = 0.42;
+  arm.rotation.z = 0.32;
   torso.add(arm);
 
   group.add(torso);
@@ -1587,46 +1596,62 @@ function buildMonsterArm(
   hand.position.set(0, -2.5 * s, 0.9 * s);
   arm.add(hand);
 
-  // Four triple-jointed fingers, ~2x human length, arched so the tips REST
-  // on the felt with the talons digging in.
+  // Four triple-jointed fingers FANNED out from the palm — each finger lives
+  // in its own group rotated about the palm so the spread reads as a splayed
+  // gripping hand rather than a straight-pronged rake.
   for (let i = 0; i < 4; i++) {
-    const fx = (-0.11 + i * 0.073) * s * m;
+    const fan = (i - 1.5) * 0.3 * m; // splay angle around the palm
     const stagger = (i % 2) * 0.08;
+    const lenScale = 1 - Math.abs(i - 1.5) * 0.12; // middle fingers longest
+    const finger = new THREE.Group();
+    finger.position.set(0, -2.5 * s, 0.9 * s); // pivot at the palm
+    finger.rotation.y = fan;
+    arm.add(finger);
     // Segment 1: root, angled down-and-forward off the palm.
-    const seg1 = new THREE.Mesh(new THREE.CapsuleGeometry(0.028 * s, 0.3 * s, 2, 6), hide);
-    seg1.position.set(fx, -2.6 * s, 1.06 * s);
+    const seg1 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.034 * s, 0.28 * s * lenScale, 2, 6),
+      hide,
+    );
+    seg1.position.set(0, -0.1 * s, 0.17 * s);
     seg1.rotation.x = -1.0 - stagger;
-    arm.add(seg1);
-    const kn1 = new THREE.Mesh(new THREE.SphereGeometry(0.036 * s, 6, 6), hide);
-    kn1.position.set(fx, -2.72 * s, 1.18 * s);
-    arm.add(kn1);
-    // Segment 2: arching further out, flatter.
-    const seg2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.024 * s, 0.26 * s, 2, 6), hide);
-    seg2.position.set(fx, -2.82 * s, 1.32 * s);
+    finger.add(seg1);
+    const kn1 = new THREE.Mesh(new THREE.SphereGeometry(0.042 * s, 6, 6), hide);
+    kn1.position.set(0, -0.22 * s, 0.29 * s);
+    finger.add(kn1);
+    // Segment 2: arching further out, flatter, curling slightly inward.
+    const seg2 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.028 * s, 0.24 * s * lenScale, 2, 6),
+      hide,
+    );
+    seg2.position.set(0, -0.32 * s, 0.43 * s);
     seg2.rotation.x = -1.35 - stagger;
-    arm.add(seg2);
-    const kn2 = new THREE.Mesh(new THREE.SphereGeometry(0.03 * s, 6, 6), hide);
-    kn2.position.set(fx, -2.88 * s, 1.44 * s);
-    arm.add(kn2);
+    seg2.rotation.y = -fan * 0.4; // curl back toward the grip
+    finger.add(seg2);
+    const kn2 = new THREE.Mesh(new THREE.SphereGeometry(0.034 * s, 6, 6), hide);
+    kn2.position.set(0, -0.38 * s, 0.55 * s);
+    finger.add(kn2);
     // Segment 3: nearly horizontal, pressing into the table.
-    const seg3 = new THREE.Mesh(new THREE.CapsuleGeometry(0.02 * s, 0.2 * s, 2, 6), hide);
-    seg3.position.set(fx, -2.92 * s, 1.56 * s);
-    seg3.rotation.x = -1.5 - stagger * 0.5;
-    arm.add(seg3);
-    // Curved black talon at the tip.
-    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.022 * s, 0.18 * s, 6), talon);
-    claw.position.set(fx, -2.96 * s, 1.68 * s);
-    claw.rotation.x = -2.1;
-    arm.add(claw);
+    const seg3 = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.023 * s, 0.18 * s * lenScale, 2, 6),
+      hide,
+    );
+    seg3.position.set(0, -0.43 * s, 0.66 * s);
+    seg3.rotation.x = -1.55 - stagger * 0.5;
+    finger.add(seg3);
+    // Curved black talon at the tip, hooking down into the felt.
+    const claw = new THREE.Mesh(new THREE.ConeGeometry(0.026 * s, 0.2 * s, 6), talon);
+    claw.position.set(0, -0.48 * s, 0.78 * s);
+    claw.rotation.x = -2.3;
+    finger.add(claw);
   }
-  // Thumb-claw splayed to the inner side.
-  const thumbSeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.03 * s, 0.26 * s, 2, 6), hide);
-  thumbSeg.position.set(0.17 * s * m, -2.56 * s, 0.98 * s);
-  thumbSeg.rotation.set(-1.0, 0, m * -0.85);
+  // Thumb-claw splayed to the inner side, opposing the fingers.
+  const thumbSeg = new THREE.Mesh(new THREE.CapsuleGeometry(0.036 * s, 0.24 * s, 2, 6), hide);
+  thumbSeg.position.set(0.19 * s * m, -2.54 * s, 0.96 * s);
+  thumbSeg.rotation.set(-1.0, 0, m * -0.95);
   arm.add(thumbSeg);
-  const thumbClaw = new THREE.Mesh(new THREE.ConeGeometry(0.024 * s, 0.16 * s, 6), talon);
-  thumbClaw.position.set(0.27 * s * m, -2.68 * s, 1.08 * s);
-  thumbClaw.rotation.set(-1.9, 0, m * -0.6);
+  const thumbClaw = new THREE.Mesh(new THREE.ConeGeometry(0.028 * s, 0.18 * s, 6), talon);
+  thumbClaw.position.set(0.3 * s * m, -2.66 * s, 1.06 * s);
+  thumbClaw.rotation.set(-2.0, 0, m * -0.6);
   arm.add(thumbClaw);
   return arm;
 }
@@ -1924,23 +1949,34 @@ export interface HpMarker {
 
 export function buildHpMarker(): HpMarker {
   const group = new THREE.Group();
-  const waxMat = dress(matte(PAL.bone, 0.55), "plaster", { normalScale: 0.5 });
+  // Bone-white wax with a waxy sheen (per the CANDLE reference sheet).
+  const waxMat = dress(
+    new THREE.MeshStandardMaterial({ color: 0xc9bda6, roughness: 0.45, metalness: 0.05 }),
+    "plaster",
+    { normalScale: 0.6 },
+  );
 
-  // A small tarnished lathed dish the candle stands in.
+  // Chamberstick: a wide mottled dish with a rolled rim and a loop handle.
+  const dishMat = dress(metalMat(0x4a3a30, 0.7), "metal", { normalScale: 0.8 });
   const dish = lathe(
     [
       [0.0, 0.0],
-      [0.16, 0.0],
-      [0.24, 0.02],
-      [0.26, 0.06],
-      [0.22, 0.08],
-      [0.14, 0.05],
+      [0.2, 0.0],
+      [0.3, 0.025],
+      [0.33, 0.07], // rolled rim
+      [0.3, 0.09],
+      [0.16, 0.05],
       [0.0, 0.05],
     ],
-    dress(metalMat(0x4a3f28, 0.7), "metal", { normalScale: 0.3 }),
+    dishMat,
     18,
   );
   group.add(dish);
+  // Loop handle on the dish edge.
+  const loop = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.016, 6, 14), dishMat);
+  loop.position.set(0.36, 0.08, 0);
+  loop.rotation.y = Math.PI / 2;
+  group.add(loop);
 
   // Wax column — lathed with a sagging melted lip and pooled base. The mesh
   // keeps its rest pose (centre y=0.3, unit scale) so renderer melt-scaling
@@ -1967,11 +2003,41 @@ export function buildHpMarker(): HpMarker {
     [0.32, 0.024, 2.2],
     [0.2, 0.034, 4.4],
     [0.38, 0.02, 3.3],
+    [0.28, 0.026, 1.3],
+    [0.42, 0.022, 5.2],
   ] as const) {
     const drip = new THREE.Mesh(new THREE.SphereGeometry(dr, 8, 8), waxMat);
-    drip.scale.set(1, 2.2, 1);
+    drip.scale.set(1, 2.4, 1);
     drip.position.set(Math.cos(da) * 0.125, dy, Math.sin(da) * 0.125);
     group.add(drip);
+  }
+  // Dried-blood runs staining the wax (per reference) + drips onto the dish.
+  const bloodWax = matte(0x4a140d, 0.6);
+  for (const [by, bh, ba] of [
+    [0.34, 0.22, 0.9],
+    [0.24, 0.3, 2.8],
+    [0.4, 0.16, 4.6],
+  ] as const) {
+    const run = new THREE.Mesh(new THREE.BoxGeometry(0.03, bh, 0.012), bloodWax);
+    run.position.set(Math.cos(ba) * 0.128, by, Math.sin(ba) * 0.128);
+    run.rotation.y = -ba + Math.PI / 2;
+    group.add(run);
+  }
+  // The blood eye sigil painted on the wax face: iris ring + weeping lines.
+  const sigilEye = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.009, 6, 12), bloodWax);
+  sigilEye.position.set(0, 0.34, 0.13);
+  group.add(sigilEye);
+  for (const wx of [-0.03, 0.03] as const) {
+    const weep = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.08, 0.01), bloodWax);
+    weep.position.set(wx, 0.25, 0.132);
+    group.add(weep);
+  }
+  // Wax pooled over the dish rim.
+  for (const pa of [0.7, 2.5, 4.1] as const) {
+    const pool = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), waxMat);
+    pool.scale.set(1.6, 0.4, 1.2);
+    pool.position.set(Math.cos(pa) * 0.2, 0.055, Math.sin(pa) * 0.2);
+    group.add(pool);
   }
 
   // Wick.
@@ -2063,229 +2129,280 @@ export function buildItemSlot(): ItemSlot {
 /** The distinctive little object for each item type, centred at the origin. */
 export function buildItemContents(item: ItemType): THREE.Group {
   const g = new THREE.Group();
-  const dark = metalMat(PAL.steelDark, 0.5);
 
   switch (item) {
     case "MAGNIFYING_GLASS": {
-      // Lies flat: dark metal rim + glass lens, with a black octagonal handle
-      // extending out to one side (matching the reference photo).
-      const rim = new THREE.Mesh(
-        new THREE.TorusGeometry(0.17, 0.04, 8, 12),
-        metalMat(0x3a3a3e, 0.5),
-      );
+      // Occult magnifier (per reference): tarnished rim, near-black lens with
+      // a pale eye sigil painted on it, handle wrapped in bloody bandage.
+      const rustRim = dress(metalMat(0x4a3a30, 0.7), "metal", { normalScale: 0.8 });
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.17, 0.04, 8, 16), rustRim);
       rim.rotation.x = Math.PI / 2;
       rim.position.set(-0.05, 0.06, -0.05);
       g.add(rim);
+      // Dark smoked lens.
       const lens = new THREE.Mesh(
         new THREE.CylinderGeometry(0.15, 0.15, 0.03, 16),
-        new THREE.MeshStandardMaterial({
-          color: 0xaeb6bc,
-          metalness: 0.2,
-          roughness: 0.05,
-          transparent: true,
-          opacity: 0.45,
-        }),
+        new THREE.MeshStandardMaterial({ color: 0x14100e, metalness: 0.3, roughness: 0.2 }),
       );
       lens.position.set(-0.05, 0.06, -0.05);
       g.add(lens);
-      // Black octagonal handle.
-      const handle = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.05, 0.055, 0.42, 8),
-        matte(0x111114, 0.55),
-      );
-      handle.rotation.set(0, 0, Math.PI / 2);
-      handle.rotation.y = -0.7;
-      handle.position.set(0.22, 0.06, 0.16);
-      g.add(handle);
-      const collar = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 0.06, 8),
-        metalMat(0x4a4a50, 0.45),
-      );
-      collar.rotation.set(0, 0, Math.PI / 2);
-      collar.rotation.y = -0.7;
-      collar.position.set(0.07, 0.06, 0.04);
-      g.add(collar);
+      // Pale eye sigil on the lens: almond outline + iris ring + lash ticks.
+      const sigil = matte(0xb8a888, 0.6);
+      const iris = new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.01, 6, 14), sigil);
+      iris.rotation.x = Math.PI / 2;
+      iris.position.set(-0.05, 0.08, -0.05);
+      g.add(iris);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + 0.3;
+        const lash = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.01, 0.05), sigil);
+        lash.position.set(-0.05 + Math.cos(a) * 0.1, 0.08, -0.05 + Math.sin(a) * 0.1);
+        lash.rotation.y = -a + Math.PI / 2;
+        g.add(lash);
+      }
+      // Handle: stacked bandage wraps, blood-spotted.
+      const wrapMat = dress(matte(0x8a7663, 0.85), "fabric", { normalScale: 0.7 });
+      const wrapBlood = matte(0x4a1710, 0.8);
+      for (let i = 0; i < 6; i++) {
+        const seg = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.05 + (i % 2) * 0.008, 0.052, 0.075, 8),
+          i === 2 || i === 4 ? wrapBlood : wrapMat,
+        );
+        seg.rotation.set(0, -0.7, Math.PI / 2);
+        seg.position.set(0.1 + i * 0.052, 0.06, 0.06 + i * 0.038);
+        g.add(seg);
+      }
       break;
     }
     case "SPEED_LOADER": {
-      // A flat star-shaped moon clip: a steel disc with a centre hole and six
-      // scalloped cut-outs around the rim (matching the reference).
-      const steelClip = metalMat(0x8a8a90, 0.45);
-      const ring = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.26, 0.26, 0.05, 6),
-        steelClip,
-      );
-      ring.position.y = 0.06;
-      g.add(ring);
-      // Centre hole (dark) + six rim scallops carved by dark cylinders.
-      const hole = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.1, 0.1, 0.08, 16),
-        matte(0x0a0a0c, 0.8),
-      );
-      hole.position.y = 0.08;
-      g.add(hole);
-      const scallopMat = matte(0x0a0a0c, 0.8);
-      for (let i = 0; i < 6; i++) {
-        const a = (i / 6) * Math.PI * 2;
-        const s = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.075, 0.075, 0.09, 12),
-          scallopMat,
-        );
-        s.position.set(Math.cos(a) * 0.26, 0.08, Math.sin(a) * 0.26);
-        g.add(s);
+      // Moon clip (per reference): a dark stained plate with a dripping
+      // crescent sigil, ringed by brass-headed shells hanging beneath.
+      const plateMat = dress(metalMat(0x3d332c, 0.75), "metal", { normalScale: 0.9 });
+      const plate = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.04, 18), plateMat);
+      plate.position.y = 0.14;
+      g.add(plate);
+      // Pale crescent sigil on top.
+      const cres = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.014, 6, 16, Math.PI * 1.4), matte(0xb0a284, 0.6));
+      cres.rotation.x = -Math.PI / 2;
+      cres.rotation.z = 0.6;
+      cres.position.y = 0.165;
+      g.add(cres);
+      // Shells clustered under the plate rim: dark-red hulls, brass heads.
+      const hullMat = matte(0x4a2320, 0.7);
+      const brassHead = metalMat(0x8a6f42, 0.5);
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2 + 0.4;
+        const px = Math.cos(a) * 0.17;
+        const pz = Math.sin(a) * 0.17;
+        const hull = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.14, 10), hullMat);
+        hull.position.set(px, 0.06, pz);
+        g.add(hull);
+        const head = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.03, 10), brassHead);
+        head.position.set(px, 0.135, pz);
+        g.add(head);
       }
       break;
     }
     case "MEDKIT": {
-      // An energy-drink can (the in-fiction "medkit"): a single lathed body
-      // with real can geometry — necked base, straight wall, tapered shoulder.
-      const can = lathe(
-        [
-          [0.11, 0.0], // recessed base
-          [0.14, 0.015],
-          [0.15, 0.05], // base chime
-          [0.15, 0.34], // straight wall
-          [0.12, 0.42], // shoulder taper
-          [0.115, 0.44], // top seam
-        ],
-        new THREE.MeshStandardMaterial({ color: 0x1b50c0, metalness: 0.5, roughness: 0.35 }),
-        22,
+      // The Elexir (per reference): a round dark-glass flask of red liquid,
+      // corked, rope wound at the neck, with a tattered eye-sigil tag.
+      const flaskGlass = new THREE.MeshStandardMaterial({
+        color: 0x241512,
+        metalness: 0.2,
+        roughness: 0.15,
+        transparent: true,
+        opacity: 0.85,
+      });
+      const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.19, 16, 14), flaskGlass);
+      bulb.scale.set(1, 1.05, 0.72); // flattened round flask
+      bulb.position.y = 0.2;
+      g.add(bulb);
+      // Dark red liquid inside.
+      const liquid = new THREE.Mesh(
+        new THREE.SphereGeometry(0.155, 12, 10),
+        matte(0x3d0a08, 0.4),
       );
-      g.add(can);
-      // Silver top lid with seam ring and pull-tab.
-      const lid = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.115, 0.115, 0.015, 20),
-        metalMat(0xb8bcc4, 0.3),
+      liquid.scale.set(1, 0.9, 0.6);
+      liquid.position.y = 0.17;
+      g.add(liquid);
+      // Neck + speckled cork.
+      const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.09, 10), flaskGlass);
+      neck.position.y = 0.42;
+      g.add(neck);
+      const cork = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.055, 0.048, 0.07, 10),
+        dress(matte(0x4a342a, 0.9), "leather", { normalScale: 0.8 }),
       );
-      lid.position.y = 0.445;
-      g.add(lid);
-      const seam = new THREE.Mesh(new THREE.TorusGeometry(0.115, 0.008, 6, 20), metalMat(0xb8bcc4, 0.3));
-      seam.rotation.x = Math.PI / 2;
-      seam.position.y = 0.45;
-      g.add(seam);
-      const tab = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.008, 6, 12), metalMat(0x989ca4, 0.35));
-      tab.rotation.x = Math.PI / 2;
-      tab.position.set(0.03, 0.46, 0);
-      g.add(tab);
-      // White lightning bolt on the side (two angled slivers).
-      const boltMat = glow(0xeef2ff, 0.5);
-      const b1 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.02), boltMat);
-      b1.position.set(0.02, 0.24, 0.15);
-      b1.rotation.z = 0.5;
-      const b2 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.02), boltMat);
-      b2.position.set(-0.02, 0.16, 0.15);
-      b2.rotation.z = 0.5;
-      g.add(b1, b2);
+      cork.position.y = 0.49;
+      g.add(cork);
+      // Rope wound around the neck.
+      const ropeMat = matte(0x6e5a42, 0.9);
+      for (let i = 0; i < 2; i++) {
+        const coil = new THREE.Mesh(new THREE.TorusGeometry(0.058, 0.012, 6, 14), ropeMat);
+        coil.rotation.x = Math.PI / 2;
+        coil.position.y = 0.4 - i * 0.025;
+        g.add(coil);
+      }
+      // Tattered parchment tag with the eye sigil.
+      const tag = new THREE.Mesh(
+        new THREE.BoxGeometry(0.11, 0.16, 0.012),
+        dress(matte(0x8a7a5c, 0.9), "fabric", { normalScale: 0.6 }),
+      );
+      tag.position.set(0.02, 0.24, 0.145);
+      tag.rotation.x = -0.15;
+      g.add(tag);
+      const tagEye = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.007, 6, 12), matte(0x2e0f0a, 0.7));
+      tagEye.position.set(0.02, 0.26, 0.155);
+      tagEye.rotation.x = -0.15;
+      g.add(tagEye);
       break;
     }
     case "HANDCUFFS": {
-      // Two dark-steel cuff rings joined by a short chain (lying flat).
-      const cuffMat = metalMat(0x4a4a4e, 0.45);
-      const ring = (): THREE.Mesh =>
-        new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.035, 10, 22), cuffMat);
-      const a = ring();
-      a.rotation.x = Math.PI / 2;
-      a.position.set(-0.2, 0.05, 0);
-      const b = ring();
-      b.rotation.x = Math.PI / 2;
-      b.position.set(0.2, 0.05, 0);
-      g.add(a, b);
-      // Chain links between them.
+      // Shackles (per reference): two heavy rusted iron cuffs — wide bands
+      // with hinge blocks and rivets — joined by a crude chain.
+      const cuffMat = dress(metalMat(0x4a3a2e, 0.75), "metal", { normalScale: 1.0 });
+      const rivetMat = metalMat(0x2e241c, 0.6);
+      for (const sx of [-1, 1] as const) {
+        // Wide cuff band (open cylinder).
+        const band = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.12, 0.12, 0.11, 14, 1, true),
+          cuffMat,
+        );
+        band.material.side = THREE.DoubleSide;
+        band.position.set(sx * 0.2, 0.07, 0);
+        g.add(band);
+        // Hinge block on the outer edge.
+        const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.12, 0.06), cuffMat);
+        hinge.position.set(sx * 0.32, 0.07, 0);
+        g.add(hinge);
+        // Rivets along the band.
+        for (let r = 0; r < 3; r++) {
+          const a = r * 0.9 + (sx === 1 ? 0.4 : 2.2);
+          const rv = new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 6), rivetMat);
+          rv.position.set(sx * 0.2 + Math.cos(a) * 0.12, 0.09, Math.sin(a) * 0.12);
+          g.add(rv);
+        }
+        // Blood-scratched sigil tick marks on the band face.
+        const scratch = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.04, 0.008), matte(0x4a120c, 0.7));
+        scratch.position.set(sx * 0.2, 0.08, 0.122);
+        scratch.rotation.z = sx * 0.3;
+        g.add(scratch);
+      }
+      // Crude chain between the cuffs.
       const linkGeo = new THREE.TorusGeometry(0.035, 0.014, 8, 14);
       for (let i = 0; i < 3; i++) {
-        const link = new THREE.Mesh(linkGeo, dark);
+        const link = new THREE.Mesh(linkGeo, cuffMat);
         link.rotation.x = i % 2 === 0 ? Math.PI / 2 : 0;
-        link.position.set(-0.07 + i * 0.07, 0.05, 0);
+        link.position.set(-0.07 + i * 0.07, 0.06, 0);
         g.add(link);
       }
       break;
     }
     case "INVERTER": {
-      // A dark metal box with a recessed face plate, corner screws and a
-      // glowing amber toggle switch (matching the reference).
-      const box = new THREE.Mesh(
-        new THREE.BoxGeometry(0.34, 0.28, 0.3),
-        matte(0x1a1a1e, 0.6),
-      );
-      box.position.y = 0.16;
-      g.add(box);
-      const plate = new THREE.Mesh(
-        new THREE.BoxGeometry(0.26, 0.2, 0.02),
-        matte(0x101013, 0.7),
-      );
-      plate.position.set(0, 0.18, 0.16);
-      g.add(plate);
+      // The Switch (per reference): a rusted industrial toggle on an angled
+      // wedge plate, LIVE/BLANK labels, conduit pipe on the side.
+      const rustBox = dress(metalMat(0x453931, 0.75), "metal", { normalScale: 1.0 });
+      // Angled wedge body.
+      const wedge = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.3, 0.26), rustBox);
+      wedge.position.y = 0.14;
+      wedge.rotation.x = -0.5; // tipped back like the reference
+      g.add(wedge);
+      // Base plate under the wedge.
+      const base = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.03, 0.34), rustBox);
+      base.position.y = 0.015;
+      g.add(base);
+      // Recessed face plate on the angled front.
+      const face = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.22, 0.02), matte(0x2a221c, 0.8));
+      face.position.set(0, 0.2, 0.135);
+      face.rotation.x = -0.5;
+      g.add(face);
+      // Big rocker toggle in the middle.
+      const rocker = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.06), dress(matte(0x8a7f6e, 0.7), "metal", { normalScale: 0.7 }));
+      rocker.position.set(0, 0.21, 0.17);
+      rocker.rotation.x = -0.65;
+      g.add(rocker);
+      // Blood exclamation mark on the rocker.
+      const bloodMark = matte(0x4a120c, 0.7);
+      const stroke = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.05, 0.01), bloodMark);
+      stroke.position.set(0, 0.235, 0.205);
+      stroke.rotation.x = -0.65;
+      g.add(stroke);
+      const dot = new THREE.Mesh(new THREE.SphereGeometry(0.012, 6, 6), bloodMark);
+      dot.position.set(0, 0.185, 0.185);
+      g.add(dot);
       // Corner screws.
-      const screwMat = metalMat(0x6a6a70, 0.4);
+      const screwMat = metalMat(0x2e241c, 0.55);
       for (const [sx, sy] of [[-1, 1], [1, 1], [-1, -1], [1, -1]] as const) {
-        const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.02, 6), screwMat);
-        sc.rotation.x = Math.PI / 2;
-        sc.position.set(sx * 0.1, 0.18 + sy * 0.07, 0.17);
+        const sc = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.02, 6), screwMat);
+        sc.rotation.x = Math.PI / 2 - 0.5;
+        sc.position.set(sx * 0.11, 0.2 + sy * 0.08, 0.14 + sy * -0.04);
         g.add(sc);
       }
-      // Glowing amber ring + hex nut + toggle lever.
-      const glowRing = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.018, 8, 20), glow(0xffa028, 2.4));
-      glowRing.position.set(0, 0.18, 0.17);
-      g.add(glowRing);
-      const nut = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 6), metalMat(0x55555c, 0.4));
-      nut.rotation.x = Math.PI / 2;
-      nut.position.set(0, 0.18, 0.18);
-      g.add(nut);
-      const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.025, 0.16, 8), metalMat(0x70707a, 0.35));
-      lever.position.set(-0.06, 0.16, 0.24);
-      lever.rotation.z = 0.7;
-      g.add(lever);
-      const tip = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), metalMat(0x80808a, 0.3));
-      tip.position.set(-0.12, 0.13, 0.27);
-      g.add(tip);
+      // Conduit pipe looping from the side into the base.
+      const pipe = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.02, 8, 14, Math.PI), metalMat(0x574a3c, 0.6));
+      pipe.position.set(0.2, 0.1, 0);
+      pipe.rotation.z = -Math.PI / 2;
+      g.add(pipe);
       break;
     }
     case "HOLLOW_POINT": {
-      // A small glass vial of dark serum with a worn metal cap — you coat the
-      // next round in it for double damage (matching the reference).
+      // Venom (per reference): an apothecary bottle of murky green poison,
+      // corked, twine at the neck, parchment label with dripping sigil.
       const glassMat = new THREE.MeshStandardMaterial({
-        color: 0xcfd6d2,
-        metalness: 0.1,
-        roughness: 0.05,
+        color: 0x2a2e22,
+        metalness: 0.15,
+        roughness: 0.12,
         transparent: true,
-        opacity: 0.28,
+        opacity: 0.75,
       });
-      // One lathed glass profile: rounded base, straight wall, curved
-      // shoulder narrowing into the neck.
+      // Lathed apothecary profile: squat body, shoulder, short neck.
       const body = lathe(
         [
-          [0.06, 0.02],
-          [0.095, 0.05],
-          [0.1, 0.12],
-          [0.1, 0.3], // straight wall
-          [0.085, 0.36], // shoulder curve
-          [0.06, 0.39],
-          [0.055, 0.44], // neck
+          [0.07, 0.02],
+          [0.105, 0.05],
+          [0.11, 0.12],
+          [0.11, 0.3], // straight wall
+          [0.09, 0.37], // shoulder
+          [0.055, 0.4],
+          [0.05, 0.46], // neck
         ],
         glassMat,
-        18,
+        16,
       );
       g.add(body);
-      // Dark serum filling most of the vial.
-      const serum = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.082, 0.078, 0.24, 16),
-        new THREE.MeshStandardMaterial({ color: 0x1a0606, roughness: 0.35 }),
+      // Murky green venom filling most of the bottle.
+      const venom = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.09, 0.086, 0.26, 14),
+        matte(0x2c3d1c, 0.45),
       );
-      serum.position.y = 0.17;
-      g.add(serum);
-      // Worn crimped metal cap with a ribbed skirt.
-      const cap = lathe(
-        [
-          [0.055, 0.43],
-          [0.075, 0.44],
-          [0.078, 0.5],
-          [0.06, 0.52],
-          [0.0, 0.525],
-        ],
-        metalMat(0x6a665e, 0.6),
-        14,
+      venom.position.y = 0.18;
+      g.add(venom);
+      // Speckled cork stopper.
+      const cork = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.05, 0.08, 10),
+        dress(matte(0x4a3028, 0.9), "leather", { normalScale: 0.8 }),
       );
-      g.add(cap);
+      cork.position.y = 0.5;
+      g.add(cork);
+      // Twine wound at the neck.
+      const twine = new THREE.Mesh(new THREE.TorusGeometry(0.054, 0.01, 6, 12), matte(0x6e5a42, 0.9));
+      twine.rotation.x = Math.PI / 2;
+      twine.position.y = 0.44;
+      g.add(twine);
+      // Parchment label with the snake-and-skull smear.
+      const label = new THREE.Mesh(
+        new THREE.BoxGeometry(0.13, 0.18, 0.012),
+        dress(matte(0x8a7a5c, 0.9), "fabric", { normalScale: 0.6 }),
+      );
+      label.position.set(0, 0.2, 0.108);
+      g.add(label);
+      const snake = new THREE.Mesh(new THREE.TorusGeometry(0.025, 0.006, 6, 12, Math.PI * 1.5), matte(0x1c1410, 0.7));
+      snake.position.set(0, 0.24, 0.118);
+      snake.rotation.z = 0.8;
+      g.add(snake);
+      const skullDot = new THREE.Mesh(new THREE.SphereGeometry(0.018, 6, 6), matte(0x1c1410, 0.7));
+      skullDot.scale.set(1, 1.15, 0.5);
+      skullDot.position.set(0, 0.17, 0.115);
+      g.add(skullDot);
       break;
     }
   }

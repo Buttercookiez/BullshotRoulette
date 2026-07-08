@@ -2001,14 +2001,16 @@ export class Renderer3D implements IRenderer {
       if (snapCycle > 14 && snapCycle < 15.4) {
         const q = (snapCycle - 14) / 1.4;
         const snap = q < 0.12 ? q / 0.12 : q > 0.7 ? (1 - q) / 0.3 : 1;
-        this.dealer.torso.rotation.z = 0.02 + snap * 0.22;
-        this.dealer.torso.rotation.y += snap * 0.3;
+        // Gentler on the giant skull: a hard cock of the head, not a whip.
+        this.dealer.torso.rotation.z = 0.02 + snap * 0.12;
+        this.dealer.torso.rotation.y += snap * 0.18;
         this.dealer.eyeMat.emissiveIntensity = shimmer + snap * 2.5;
       } else {
         this.dealer.torso.rotation.z = 0.02;
       }
-      // Idle tic: every so often the resting hand crawls up and scratches at
-      // the neck — quick, fidgety, insect-like — then drops back down.
+      // Idle tic: every so often the resting claw lifts slightly off the felt
+      // and rakes at the table — a low, scraping fidget (the old "scratch at
+      // the neck" raise made the claw float in mid-air on the new skull body).
       if (this.dealer.restArm) {
         const cycle = t % 13;
         const inWindow = cycle > 8 && cycle < 10.6;
@@ -2017,21 +2019,21 @@ export class Renderer3D implements IRenderer {
           const q = (cycle - 8) / 2.6;
           raise = q < 0.2 ? q / 0.2 : q > 0.85 ? (1 - q) / 0.15 : 1;
         }
-        const scratch = raise * Math.sin(t * 21) * 0.14;
-        // When not scratching, the claws slow-drum on the felt: a staggered
+        const scratch = raise * Math.sin(t * 18) * 0.06;
+        // When not scraping, the claws slow-drum on the felt: a staggered
         // micro-oscillation rolling through the resting hand.
-        const drum = (1 - raise) * Math.sin(t * 5.2) * Math.max(0, Math.sin(t * 0.7)) * 0.045;
-        this.dealer.restArm.rotation.x = -1.15 - raise * 1.35 + scratch + drum;
-        this.dealer.restArm.rotation.z = -0.2 - raise * 0.5 + scratch * 0.5 + drum * 0.4;
+        const drum = (1 - raise) * Math.sin(t * 5.2) * Math.max(0, Math.sin(t * 0.7)) * 0.035;
+        this.dealer.restArm.rotation.x = -1.15 - raise * 0.22 + scratch + drum;
+        this.dealer.restArm.rotation.z = -0.32 - raise * 0.1 + scratch * 0.4 + drum * 0.3;
       }
-      // Slow lean-in: every ~25s the dealer creeps toward the player over a
-      // few seconds, holds, then snaps back upright in an instant.
+      // Slow lean-in: every ~25s the skull creeps toward the player over a
+      // few seconds, holds, then snaps back in an instant.
       const leanCycle = t % 25;
       if (leanCycle > 19 && leanCycle < 24) {
         const q = (leanCycle - 19) / 5;
         const lean = q < 0.6 ? q / 0.6 : q > 0.96 ? 0 : 1; // creep, hold, snap back
-        this.dealer.torso.position.z = lean * 0.9;
-        this.dealer.torso.rotation.x += lean * 0.1;
+        this.dealer.torso.position.z = lean * 0.55;
+        this.dealer.torso.rotation.x += lean * 0.06;
       } else {
         this.dealer.torso.position.z = 0;
       }
