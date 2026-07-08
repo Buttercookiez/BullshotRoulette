@@ -289,8 +289,10 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       // Reveal the board (emits initial state + ROUND_SET_LOADED events).
       matchStarted = true;
       // Wire the shared presentation pipeline with the correct local seat.
+      // Note: wire() attaches the controller, so events are emitted to the
+      // renderer/audio/caption immediately. beginMatch() also broadcasts the
+      // match-start events, so we skip the double-emit by only calling wire().
       wire(controller, localParticipant);
-      controller.beginMatch();
       chatEl.style.display = "flex"; // chat opens once the duel begins
       onMatchStart();
     },

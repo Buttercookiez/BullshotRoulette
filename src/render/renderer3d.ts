@@ -1045,17 +1045,14 @@ export class Renderer3D implements IRenderer {
       return;
     }
     // A life was lost: keep the candle lit for now and queue the blow-out.
-    this.renderHpMarkers(markers, shown, max);
-    const dyingIdx = max - shown;
+    // Store the candle's index in the row so the close-up camera shot frames
+    // the exact dying candle (not always the middle one).
+    // Use the correct markers array: if player is taking damage, show player
+    // candles; if dealer is taking damage, show dealer candles.
+    const targetMarkers = participant === "PLAYER" ? this.playerHpMarkers : this.dealerHpMarkers;
     this.candleBlow = {
-      markers,
-      index: dyingIdx,
-      max,
-      side,
-      target: hp,
-      startMs: this.now() + 1950,
-      dur: 800,
-      soundPlayed: false,
+      index: hp_left,
+      markers: targetMarkers,
     };
   }
 
@@ -1445,8 +1442,13 @@ export class Renderer3D implements IRenderer {
   /** A close shot of the exact candle that's about to blow out, framed from the
    *  near side so the dealer's body never blocks it. */
   private candleShot(target: ParticipantId): CamShot {
-    // Determine the unmirrored physical Z coordinate of the target's candles
-    const unmirroredZ = target === "AI" ? -HP_ROW_Z : HP_ROW_Z;
+    // When we're player2 (mirrorCam), the target remap is backward:
+    // mirrorCam=true means we're "AI" seat so the opponent is "PLAYER" seat.
+    // But candleBlow was set with the UNMAPPED target from the engine.
+    // So we need to remap it relative to our local seat.
+    const effectiveTarget = this.mirrorCam && target === "AI" ? "PLAYER" : 
+                            this.mirrorCam && target === "PLAYER" ? "AI" : target;
+    const unmirroredZ = effectiveTarget === "AI" ? -HP_ROW_Z : HP_ROW_Z;
     // Because mirrorCam flips the Z coordinate at the very end of the pipeline, 
     // we must pre-flip our target coordinates so they land on the correct physical meshes!
     const finalZ = this.mirrorCam ? -unmirroredZ : unmirroredZ;
@@ -1454,8 +1456,8 @@ export class Renderer3D implements IRenderer {
     // Determine which candle in the row is dying
     const spacing = 0.44;
     const idx = this.candleBlow ? this.candleBlow.index : 2;
-    const startX = target === "AI" ? 2.4 : -2.4;
-    const dirX = target === "AI" ? 1 : -1;
+    const startX = effectiveTarget === "AI" ? 2.4 : -2.4;
+    const dirX = effectiveTarget === "AI" ? 1 : -1;
     const cx = startX + dirX * idx * spacing;
     
     // We also flip the camera Z-offset so we frame it from the near side correctly.
