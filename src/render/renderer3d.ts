@@ -934,34 +934,21 @@ export class Renderer3D implements IRenderer {
     const row = document.createElement("div");
     row.style.cssText = "display:flex;align-items:center;gap:26px;";
 
-    const makeChoice = (label: string, color: string): HTMLButtonElement => {
-      const btn = document.createElement("button");
-      btn.textContent = label;
-      btn.style.cssText =
-        "font-family:'Courier New',monospace;cursor:pointer;background:none;border:none;" +
-        `color:${color};font-size:clamp(20px,5vw,28px);font-weight:700;letter-spacing:10px;` +
-        "text-transform:uppercase;padding:14px 18px;opacity:0.85;" +
-        "transition:opacity .15s,text-shadow .15s;" +
-        "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
-      const on = (): void => { btn.style.opacity = "1"; btn.style.textShadow = `0 0 18px ${color}`; };
-      const off = (): void => { btn.style.opacity = "0.85"; btn.style.textShadow = "none"; };
-      btn.addEventListener("mouseenter", on);
-      btn.addEventListener("mouseleave", off);
-      btn.addEventListener("touchstart", on, { passive: true });
-      btn.addEventListener("touchend", off, { passive: true });
-      return btn;
-    };
-
+    // Styling lives in index.html (.rr-aim-*): Nosifer dripping-blood type,
+    // blood-drip shadows, and a candle-like flicker.
     const opponent: ParticipantId = this.localParticipant === "PLAYER" ? "AI" : "PLAYER";
-    const oppBtn = makeChoice("THEM", "#b3261e");
+    const oppBtn = document.createElement("button");
+    oppBtn.textContent = "THEM";
+    oppBtn.className = "rr-aim-choice rr-aim-them";
     oppBtn.addEventListener("click", () => this.onTargetClick(opponent));
 
     const divider = document.createElement("span");
     divider.textContent = "|";
-    divider.style.cssText =
-      "font-family:'Courier New',monospace;color:#3a2a2a;font-size:22px;user-select:none;";
+    divider.className = "rr-aim-divider";
 
-    const selfBtn = makeChoice("YOU", "#8a7b5c");
+    const selfBtn = document.createElement("button");
+    selfBtn.textContent = "YOU";
+    selfBtn.className = "rr-aim-choice rr-aim-you";
     selfBtn.addEventListener("click", () => this.onTargetClick(this.localParticipant));
 
     row.appendChild(oppBtn);
@@ -971,11 +958,7 @@ export class Renderer3D implements IRenderer {
 
     const cancel = document.createElement("button");
     cancel.textContent = "LOWER";
-    cancel.style.cssText =
-      "font-family:'Courier New',monospace;font-size:11px;letter-spacing:6px;" +
-      "color:#4a443a;background:none;border:none;padding:6px 18px;" +
-      "cursor:pointer;text-transform:uppercase;opacity:0.7;" +
-      "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+    cancel.className = "rr-aim-cancel";
     cancel.addEventListener("click", () => {
       this.aiming = false;
       this.firing = false;
