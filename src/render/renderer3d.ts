@@ -915,9 +915,8 @@ export class Renderer3D implements IRenderer {
     }
   }
 
-  /** Show/hide the horror-styled target-choice overlay while aiming.
-   *  Two large tombstone buttons (opponent in blood red, self in bone amber)
-   *  plus a LOWER GUN escape — big touch targets that work great on mobile. */
+  /** Show/hide the minimalist target-choice overlay while aiming.
+   *  Two bare text choices — THEM / YOU — plus a quiet escape. */
   private setAimOverlay(show: boolean): void {
     if (!show) {
       if (this.aimOverlay?.parentNode) this.aimOverlay.parentNode.removeChild(this.aimOverlay);
@@ -928,40 +927,24 @@ export class Renderer3D implements IRenderer {
 
     const wrap = document.createElement("div");
     wrap.style.cssText =
-      "position:fixed;bottom:max(4%, env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);" +
-      "display:flex;flex-direction:column;align-items:center;gap:10px;z-index:9999;" +
-      "pointer-events:auto;width:min(94vw, 560px);";
-
-    const title = document.createElement("div");
-    title.textContent = "CHOOSE YOUR FATE";
-    title.style.cssText =
-      "font-family:'Courier New',monospace;font-size:clamp(11px,2.6vw,14px);letter-spacing:8px;" +
-      "color:#7d2626;text-shadow:0 0 12px rgba(160,20,20,0.7);text-transform:uppercase;";
-    wrap.appendChild(title);
+      "position:fixed;bottom:max(6%, env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);" +
+      "display:flex;flex-direction:column;align-items:center;gap:14px;z-index:9999;" +
+      "pointer-events:auto;";
 
     const row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:12px;width:100%;";
+    row.style.cssText = "display:flex;align-items:center;gap:26px;";
 
-    const makeFateBtn = (label: string, sub: string, accent: string, glow: string): HTMLButtonElement => {
+    const makeChoice = (label: string, color: string): HTMLButtonElement => {
       const btn = document.createElement("button");
+      btn.textContent = label;
       btn.style.cssText =
-        "flex:1;min-height:64px;font-family:'Courier New',monospace;cursor:pointer;" +
-        `background:linear-gradient(180deg, rgba(10,6,6,0.92), rgba(22,8,8,0.92));` +
-        `border:2px solid ${accent};color:${accent};padding:12px 8px;` +
-        "display:flex;flex-direction:column;align-items:center;gap:4px;" +
-        "text-transform:uppercase;transition:box-shadow .15s,transform .1s;" +
-        `box-shadow:0 0 0 rgba(0,0,0,0), inset 0 0 18px rgba(0,0,0,0.8);` +
+        "font-family:'Courier New',monospace;cursor:pointer;background:none;border:none;" +
+        `color:${color};font-size:clamp(20px,5vw,28px);font-weight:700;letter-spacing:10px;` +
+        "text-transform:uppercase;padding:14px 18px;opacity:0.85;" +
+        "transition:opacity .15s,text-shadow .15s;" +
         "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
-      const main = document.createElement("span");
-      main.textContent = label;
-      main.style.cssText = "font-size:clamp(14px,3.4vw,19px);font-weight:700;letter-spacing:4px;";
-      const small = document.createElement("span");
-      small.textContent = sub;
-      small.style.cssText = `font-size:clamp(9px,2vw,11px);letter-spacing:2px;opacity:0.65;`;
-      btn.appendChild(main);
-      btn.appendChild(small);
-      const on = (): void => { btn.style.boxShadow = `0 0 22px ${glow}, inset 0 0 18px rgba(0,0,0,0.8)`; btn.style.transform = "scale(1.03)"; };
-      const off = (): void => { btn.style.boxShadow = "0 0 0 rgba(0,0,0,0), inset 0 0 18px rgba(0,0,0,0.8)"; btn.style.transform = "scale(1)"; };
+      const on = (): void => { btn.style.opacity = "1"; btn.style.textShadow = `0 0 18px ${color}`; };
+      const off = (): void => { btn.style.opacity = "0.85"; btn.style.textShadow = "none"; };
       btn.addEventListener("mouseenter", on);
       btn.addEventListener("mouseleave", off);
       btn.addEventListener("touchstart", on, { passive: true });
@@ -970,20 +953,28 @@ export class Renderer3D implements IRenderer {
     };
 
     const opponent: ParticipantId = this.localParticipant === "PLAYER" ? "AI" : "PLAYER";
-    const oppBtn = makeFateBtn("THE OPPONENT", "SEND THE BULLET ACROSS", "#c1352b", "rgba(193,53,43,0.55)");
+    const oppBtn = makeChoice("THEM", "#b3261e");
     oppBtn.addEventListener("click", () => this.onTargetClick(opponent));
-    const selfBtn = makeFateBtn("YOURSELF", "BITE THE BARREL", "#d9a441", "rgba(217,164,65,0.5)");
+
+    const divider = document.createElement("span");
+    divider.textContent = "|";
+    divider.style.cssText =
+      "font-family:'Courier New',monospace;color:#3a2a2a;font-size:22px;user-select:none;";
+
+    const selfBtn = makeChoice("YOU", "#8a7b5c");
     selfBtn.addEventListener("click", () => this.onTargetClick(this.localParticipant));
+
     row.appendChild(oppBtn);
+    row.appendChild(divider);
     row.appendChild(selfBtn);
     wrap.appendChild(row);
 
     const cancel = document.createElement("button");
-    cancel.textContent = "LOWER THE GUN";
+    cancel.textContent = "LOWER";
     cancel.style.cssText =
-      "font-family:'Courier New',monospace;font-size:clamp(10px,2.4vw,12px);letter-spacing:4px;" +
-      "color:#6f675a;background:transparent;border:1px solid #3a332b;padding:8px 22px;" +
-      "cursor:pointer;text-transform:uppercase;min-height:38px;" +
+      "font-family:'Courier New',monospace;font-size:11px;letter-spacing:6px;" +
+      "color:#4a443a;background:none;border:none;padding:6px 18px;" +
+      "cursor:pointer;text-transform:uppercase;opacity:0.7;" +
       "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
     cancel.addEventListener("click", () => {
       this.aiming = false;
