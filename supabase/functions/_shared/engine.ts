@@ -122,7 +122,11 @@ export function createMatch(config: GameConfig, rng: RNG): EngineResult {
 
 export function loadRoundSet(state: GameState, rng: RNG): EngineResult {
   const { config } = state;
-  const { live, blank } = chooseComposition(config, rng);
+  // SUDDEN DEATH: both on their last candle -> full cylinder, one lone blank.
+  const suddenDeath = state.participants.PLAYER.hp === 1 && state.participants.AI.hp === 1;
+  const { live, blank } = suddenDeath
+    ? { live: config.maxRounds - 1, blank: 1 }
+    : chooseComposition(config, rng);
   const cylinder = loadCylinder(live, blank, rng);
   const counts = remainingCounts(cylinder);
   const grantCount = state.roundSetIndex === 0 ? 2 : 4;

@@ -150,7 +150,15 @@ export function createMatch(config: GameConfig, rng: RNG): EngineResult {
 export function loadRoundSet(state: GameState, rng: RNG): EngineResult {
   const { config } = state;
 
-  const { live, blank } = chooseComposition(config, rng);
+  // SUDDEN DEATH: when BOTH participants are down to their last candle, the
+  // next cylinder is maximally lethal — full size, every chamber live except
+  // one lone blank. (The blank keeps the composition valid and preserves a
+  // sliver of hope; anything more would let the active player win for free.)
+  const suddenDeath =
+    state.participants.PLAYER.hp === 1 && state.participants.AI.hp === 1;
+  const { live, blank } = suddenDeath
+    ? { live: config.maxRounds - 1, blank: 1 }
+    : chooseComposition(config, rng);
   const cylinder = loadCylinder(live, blank, rng);
   const counts = remainingCounts(cylinder);
 

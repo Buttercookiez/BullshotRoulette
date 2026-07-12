@@ -22,18 +22,22 @@ export interface MultiplayerFlowDeps {
   wire: (controller: MultiplayerGameController, localParticipant?: "PLAYER" | "AI") => void;
   onMatchStart: () => void;
   onMatchEnd: (youWon: boolean) => void;
+  /** Called when the player clicks PLAY AGAIN — restart the queue, same bet. */
+  onRematch?: () => void;
 }
 
 export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   cancel: () => void;
   submitAction: (a: Action) => void;
 } {
-  const { renderer, audio, caption, playerId, betAmount, wire, onMatchStart, onMatchEnd } = deps;
+  const { renderer, audio, caption, playerId, betAmount, wire, onMatchStart, onMatchEnd, onRematch } = deps;
 
   let cancelled = false;
   let matchStarted = false;
   let matchEnded = false;
   let timesUpShown = false;
+  /** Last second we played a countdown tick for (avoid double ticks). */
+  let lastTickSecond = -1;
 
   caption.enqueue("SEARCHING", "Looking for an opponent...");
 
@@ -103,6 +107,31 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   const resultSub = document.createElement("div");
   resultSub.style.cssText =
     "font-size:13px;letter-spacing:5px;color:#6a6258;text-transform:uppercase;";
+  // Win streak line (only shown when a streak is alive).
+  const streakEl = document.createElement("div");
+  streakEl.style.cssText =
+    "font-size:12px;letter-spacing:6px;color:#c1352b;text-transform:uppercase;" +
+    "display:none;";
+  // PLAY AGAIN — rejoin the queue with the same bet.
+  const againBtn = document.createElement("button");
+  againBtn.textContent = "PLAY AGAIN";
+  againBtn.style.cssText =
+    "font-family:'Courier New',monospace;font-size:14px;font-weight:700;" +
+    "letter-spacing:8px;text-transform:uppercase;color:#c8b8a8;" +
+    "background:transparent;border:1px solid #4a1010;padding:14px 32px;" +
+    "cursor:pointer;margin-top:12px;transition:color 0.2s,border-color 0.2s;";
+  againBtn.addEventListener("mouseenter", () => {
+    againBtn.style.color = "#ff3b2e";
+    againBtn.style.borderColor = "#8a1a12";
+  });
+  againBtn.addEventListener("mouseleave", () => {
+    againBtn.style.color = "#c8b8a8";
+    againBtn.style.borderColor = "#4a1010";
+  });
+  againBtn.addEventListener("click", () => {
+    cleanup();
+    onRematch?.();
+  });
   const backBtn = document.createElement("button");
   backBtn.textContent = "BACK TO MENU";
   backBtn.style.cssText =
@@ -126,13 +155,33 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
   });
   resultEl.appendChild(resultTitle);
   resultEl.appendChild(resultSub);
+  resultEl.appendChild(streakEl);
+  resultEl.appendChild(againBtn);
   resultEl.appendChild(backBtn);
   document.body.appendChild(resultEl);
 
+  // Win streak lives in localStorage so it survives page reloads.
+  const STREAK_KEY = "rr_win_streak";
+  let streakCounted = false;
   const showResult = (youWon: boolean): void => {
     resultTitle.textContent = youWon ? "YOU WIN" : "YOU LOSE";
     resultTitle.style.color = youWon ? "#c8b8a8" : "#a01818";
     resultSub.textContent = youWon ? "The pot is yours." : "Better luck next time.";
+    // Update + display the win streak (count each match exactly once).
+    try {
+      let streak = parseInt(localStorage.getItem(STREAK_KEY) ?? "0", 10) || 0;
+      if (!streakCounted) {
+        streakCounted = true;
+        streak = youWon ? streak + 1 : 0;
+        localStorage.setItem(STREAK_KEY, String(streak));
+      }
+      if (streak >= 2) {
+        streakEl.textContent = `${streak} WINS IN A ROW`;
+        streakEl.style.display = "block";
+      } else {
+        streakEl.style.display = "none";
+      }
+    } catch { /* localStorage unavailable — skip the streak */ }
     resultEl.style.display = "flex";
   };
 
@@ -346,8 +395,14 @@ export function startMultiplayerFlow(deps: MultiplayerFlowDeps): {
       // Show an "AFK" warning at 5s left so the player has a moment to act.
       if (secondsLeft <= 5 && secondsLeft > 0) {
         afkWarnEl.style.opacity = "1";
+        // Urgent tick each of the final 5 seconds.
+        if (secondsLeft !== lastTickSecond) {
+          lastTickSecond = secondsLeft;
+          audio.playUiBlip();
+        }
       } else {
         afkWarnEl.style.opacity = "0";
+        lastTickSecond = -1;
       }
     },
   });

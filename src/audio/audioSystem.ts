@@ -97,6 +97,9 @@ export class AudioSystem {
   private win: HowlLike | undefined;
   private lose: HowlLike | undefined;
   private chain: HowlLike | undefined;
+  private heartbeat: HowlLike | undefined;
+  /** True while the low-HP heartbeat loop is audible. */
+  private heartbeatOn = false;
   private itemSounds: Partial<Record<ItemType, HowlLike>> = {};
 
   constructor(options: AudioSystemOptions = {}) {
@@ -142,6 +145,8 @@ export class AudioSystem {
     });
     this.win = this.makeHowl("win", { volume: 0.9 });
     this.lose = this.makeHowl("lose", { volume: 0.9 });
+    // Low-HP heartbeat: loops silently until enabled by setHeartbeat(true).
+    this.heartbeat = this.makeHowl("heartbeat", { loop: true, volume: 0 });
 
     // Per-item use sounds.
     this.itemSounds = {
@@ -295,6 +300,27 @@ export class AudioSystem {
     this.safePlay(this.candleBlow);
   }
 
+  /**
+   * Enable/disable the low-HP heartbeat loop. Starts playing (silently
+   * looping) the first time it's enabled; volume ramps with intensity 0-1.
+   */
+  setHeartbeat(on: boolean, intensity = 1): void {
+    if (!this.heartbeat) return;
+    try {
+      if (on && !this.heartbeatOn) {
+        this.heartbeat.play();
+        this.heartbeatOn = true;
+      }
+      this.heartbeat.volume(on ? 0.25 + 0.45 * Math.min(1, Math.max(0, intensity)) : 0);
+      if (!on && this.heartbeatOn) {
+        this.heartbeat.stop();
+        this.heartbeatOn = false;
+      }
+    } catch (err) {
+      console.warn("[audio] heartbeat toggle threw", err);
+    }
+  }
+
   /** Play when the gun is raised (hammer cocked). */
   playHammerCock(): void {
     this.safePlay(this.hammerCock);
@@ -356,6 +382,7 @@ export class AudioSystem {
       this.roundStart,
       this.win,
       this.lose,
+      this.heartbeat,
       ...Object.values(this.itemSounds),
     ]) {
       this.safeStopAndUnload(howl);

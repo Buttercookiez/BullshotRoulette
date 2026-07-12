@@ -249,6 +249,13 @@ async function bootstrap(): Promise<void> {
   const wire = (ctrl: PresentationController, localParticipant: "PLAYER" | "AI" = "PLAYER"): void => {
   ctrl.onStateChange((state) => {
     renderer.render(state);
+    // Low-HP heartbeat: pounds when the LOCAL player is on their last candle.
+    const localHp = state.participants[localParticipant]?.hp ?? 3;
+    const inPlay = state.phase !== "MATCH_OVER";
+    audio.setHeartbeat(
+      inPlay && localHp === 1,
+      state.activeParticipant !== localParticipant ? 1 : 0.6,
+    );
     if (state.phase === "MATCH_OVER") {
       if (!matchOverTimeout) {
         matchOverTimeout = setTimeout(() => {
@@ -385,6 +392,36 @@ async function bootstrap(): Promise<void> {
     }, { once: true });
 
     // FIND OPPONENT (multiplayer) button.
+    // Factored so PLAY AGAIN on the result screen can relaunch the queue
+    // with the same bet without going back through the menu.
+    const launchMultiplayer = async (bet: number): Promise<void> => {
+      const { startMultiplayerFlow } = await import("./multiplayer/flow");
+      const mp = startMultiplayerFlow({
+        renderer,
+        audio,
+        caption,
+        playerId: getOrCreatePlayerId(),
+        betAmount: bet,
+        wire, // reuse the single-player presentation pipeline
+        onMatchStart: () => {
+          caption.enqueue("MATCH STARTED", "Click the gun to aim.");
+        },
+        onMatchEnd: (youWon) => {
+          caption.enqueue(
+            youWon ? "YOU WIN" : "YOU LOSE",
+            youWon ? "The pot is yours." : "Better luck next time.",
+          );
+        },
+        onRematch: () => {
+          renderer.reset();
+          void launchMultiplayer(bet);
+        },
+      });
+
+      // Wire the renderer's clicks to the multiplayer client.
+      (window as any).__mpSubmitAction = (action: any) => mp.submitAction(action);
+    };
+
     const multiBtn = document.getElementById("rr-multi-btn");
     if (multiBtn) {
       multiBtn.addEventListener("click", () => {
@@ -398,28 +435,7 @@ async function bootstrap(): Promise<void> {
           if (bet < 0) return;
           (window as any).__rr_bet = bet;
 
-          // Start the multiplayer flow.
-          const { startMultiplayerFlow } = await import("./multiplayer/flow");
-          const mp = startMultiplayerFlow({
-            renderer,
-            audio,
-            caption,
-            playerId: getOrCreatePlayerId(),
-            betAmount: bet,
-            wire, // reuse the single-player presentation pipeline
-            onMatchStart: () => {
-              caption.enqueue("MATCH STARTED", "Click the gun to aim.");
-            },
-            onMatchEnd: (youWon) => {
-              caption.enqueue(
-                youWon ? "YOU WIN" : "YOU LOSE",
-                youWon ? "The pot is yours." : "Better luck next time.",
-              );
-            },
-          });
-
-          // Wire the renderer's clicks to the multiplayer client.
-          (window as any).__mpSubmitAction = (action: any) => mp.submitAction(action);
+          await launchMultiplayer(bet);
         });
       });
     }

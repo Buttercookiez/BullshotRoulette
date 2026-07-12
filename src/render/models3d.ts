@@ -2622,14 +2622,14 @@ export function buildMiniLamp(): MiniLamp {
   headCone.position.set(headX, headY - 0.2, 0);
   group.add(headCone);
 
-  // Glowing lens underneath the head — a dying sodium amber.
-  const glowMat = glow(0xe8cf8f, 2.3);
+  // Glowing lens underneath the head — warm burning orange.
+  const glowMat = glow(0xffb35e, 2.6);
   const flame = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.42, 0.16, 16), glowMat);
   flame.position.set(headX, headY - 0.5, 0);
   group.add(flame);
 
-  // A weaker hanging light — warm tungsten amber to match the main bulb.
-  const light = new THREE.PointLight(0xffb058, 9, 18, 2);
+  // A weaker hanging light — deep warm orange to match the main bulb.
+  const light = new THREE.PointLight(0xff8f30, 10, 18, 2);
   light.position.set(headX, headY - 0.6, 0);
   light.castShadow = true;
   light.shadow.mapSize.set(1024, 1024);

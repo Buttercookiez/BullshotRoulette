@@ -201,6 +201,9 @@ export class Renderer3D implements IRenderer {
   private hallwayLight: THREE.SpotLight | undefined;
   private miniLamp: MiniLamp | undefined;
   private graveflies: Graveflies | undefined;
+  /** Dust motes drifting through the lamplight (cheap Points cloud). */
+  private dustMotes: THREE.Points | undefined;
+  private dustSeeds: Float32Array | undefined;
   private puddleRipple: THREE.Mesh | undefined;
   private playerHp: HpMarker[] = [];
   private dealerHp: HpMarker[] = [];
@@ -462,9 +465,9 @@ export class Renderer3D implements IRenderer {
     fill.position.set(0, 8, 16);
     scene.add(fill);
 
-    // Warm incandescent bulb (~2400K amber): dim, tight falloff — a small
-    // pool of old tungsten lamplight in a room of black.
-    const bulb = new THREE.PointLight(0xffb454, 30, 22, 2);
+    // Warm incandescent bulb (~2000K deep orange): dim, tight falloff — a
+    // small pool of old tungsten lamplight in a room of black.
+    const bulb = new THREE.PointLight(0xff9435, 32, 22, 2);
     bulb.position.set(0, 11, 0);
     bulb.castShadow = true;
     bulb.shadow.mapSize.set(2048, 2048);
@@ -477,9 +480,9 @@ export class Renderer3D implements IRenderer {
     const bulbMesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.25, 16, 16),
       new THREE.MeshStandardMaterial({
-        color: 0xffc880,
-        emissive: 0xffa040,
-        emissiveIntensity: 2.6,
+        color: 0xffb868,
+        emissive: 0xff8c28,
+        emissiveIntensity: 2.8,
         transparent: true,
         opacity: 0.92,
         roughness: 0.15,
@@ -592,6 +595,38 @@ export class Renderer3D implements IRenderer {
     flies.group.position.copy(headWorld);
     scene.add(flies.group);
     this.graveflies = flies;
+
+    // --- Dust motes drifting through the bulb's light cone ---------------
+    // A single cheap Points cloud (no per-particle meshes) so it costs
+    // almost nothing, even on mobile.
+    {
+      const DUST_N = 110;
+      const pos = new Float32Array(DUST_N * 3);
+      const seeds = new Float32Array(DUST_N * 3);
+      for (let i = 0; i < DUST_N; i++) {
+        pos[i * 3] = (Math.random() - 0.5) * 9;      // x: around the table
+        pos[i * 3 + 1] = 2.5 + Math.random() * 8;    // y: table to bulb
+        pos[i * 3 + 2] = (Math.random() - 0.5) * 9;  // z
+        seeds[i * 3] = Math.random() * Math.PI * 2;   // drift phase
+        seeds[i * 3 + 1] = 0.05 + Math.random() * 0.12; // fall speed
+        seeds[i * 3 + 2] = 0.3 + Math.random() * 0.8;   // sway amplitude
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+      const dustMat = new THREE.PointsMaterial({
+        color: 0xffc98a,
+        size: 0.045,
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+      });
+      const dust = new THREE.Points(geo, dustMat);
+      scene.add(dust);
+      this.dustMotes = dust;
+      this.dustSeeds = seeds;
+    }
 
     // --- World -----------------------------------------------------------
     const room = buildRoom();
@@ -2117,6 +2152,29 @@ export class Renderer3D implements IRenderer {
       const deathRed = this.deathPlayerProg !== null ? Math.min(1, this.deathPlayerProg * 2) : 0;
       const v = Math.max(hurt !== null ? 1 - hurt : 0, deathRed);
       document.documentElement.style.setProperty("--rr-hurt", v.toFixed(2));
+    }
+
+    // --- Dust motes: slow fall + sinusoidal sway, wrapping at the table --
+    if (this.dustMotes && this.dustSeeds) {
+      const attr = this.dustMotes.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const arr = attr.array as Float32Array;
+      const n = arr.length / 3;
+      for (let i = 0; i < n; i++) {
+        const phase = this.dustSeeds[i * 3]!;
+        const fall = this.dustSeeds[i * 3 + 1]!;
+        const sway = this.dustSeeds[i * 3 + 2]!;
+        // Gentle sideways sway + a constant slow fall.
+        arr[i * 3] = (arr[i * 3] ?? 0) + Math.sin(t * 0.4 + phase) * 0.0016 * sway;
+        arr[i * 3 + 1] = (arr[i * 3 + 1] ?? 0) - fall * 0.016;
+        arr[i * 3 + 2] = (arr[i * 3 + 2] ?? 0) + Math.cos(t * 0.33 + phase * 1.7) * 0.0013 * sway;
+        // Respawn at the top once a mote sinks below the table.
+        if (arr[i * 3 + 1]! < 2.2) {
+          arr[i * 3] = (Math.random() - 0.5) * 9;
+          arr[i * 3 + 1] = 9.5 + Math.random() * 1.5;
+          arr[i * 3 + 2] = (Math.random() - 0.5) * 9;
+        }
+      }
+      attr.needsUpdate = true;
     }
 
     // --- Swinging bulb: pendulum + steady waver + horror blink-outs ------
