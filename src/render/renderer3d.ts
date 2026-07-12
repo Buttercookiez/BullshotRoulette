@@ -329,6 +329,8 @@ export class Renderer3D implements IRenderer {
   private gunDropAt = 0; // when to lower the gun back into the circle
   private dealerMarker: THREE.Group | undefined;
   private selfMarker: THREE.Group | undefined;
+  /** DOM overlay with the SHOOT OPPONENT / SHOOT YOURSELF buttons while aiming. */
+  private aimOverlay: HTMLDivElement | null = null;
   private playerSpinToken: THREE.Group | null = null;
   private dealerSpinToken: THREE.Group | null = null;
   // Live affordance flags, refreshed every render(state).
@@ -374,17 +376,28 @@ export class Renderer3D implements IRenderer {
 
       this.resolveSize();
 
+      // Mobile detection: coarse pointer or touch points. Mobile GPUs choke on
+      // full-DPR rendering + MSAA + soft shadows, causing the hangs reported
+      // on phones — so scale all three down there.
+      const isMobile =
+        typeof window !== "undefined" &&
+        (window.matchMedia?.("(pointer: coarse)").matches ||
+          (typeof navigator !== "undefined" && navigator.maxTouchPoints > 1));
+
       const renderer = new THREE.WebGLRenderer({
-        antialias: true,
+        antialias: !isMobile,
         canvas: isCanvas ? (canvasOrContainer as HTMLCanvasElement) : undefined,
         powerPreference: "high-performance",
       });
       renderer.setPixelRatio(
-        typeof window !== "undefined" ? Math.min(window.devicePixelRatio, 2) : 1,
+        typeof window !== "undefined"
+          ? Math.min(window.devicePixelRatio, isMobile ? 1.5 : 2)
+          : 1,
       );
       renderer.setSize(this.width, this.height, false);
       renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      // Soft shadows are the single most expensive fragment cost on phones.
+      renderer.shadowMap.type = isMobile ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05;
 
@@ -886,8 +899,12 @@ export class Renderer3D implements IRenderer {
   /** Show/hide the aim markers; the spin disk shows only when usable. */
   private updateMarkers(): void {
     const showAim = this.aiming && !this.firing;
-    if (this.dealerMarker) this.dealerMarker.visible = showAim;
-    if (this.selfMarker) this.selfMarker.visible = showAim;
+    // The old floating ring markers are retired in favour of the DOM target
+    // overlay (better readability, horror styling, and large touch targets
+    // for mobile). The in-world dealer body remains raycast-clickable.
+    if (this.dealerMarker) this.dealerMarker.visible = false;
+    if (this.selfMarker) this.selfMarker.visible = false;
+    this.setAimOverlay(showAim);
     const hideTableItems = this.aiming;
     // Only show the spin token that belongs to your perspective
     if (this.playerSpinToken) {
@@ -896,6 +913,87 @@ export class Renderer3D implements IRenderer {
     if (this.dealerSpinToken) {
       this.dealerSpinToken.visible = !hideTableItems && this.localParticipant === "AI";
     }
+  }
+
+  /** Show/hide the horror-styled target-choice overlay while aiming.
+   *  Two large tombstone buttons (opponent in blood red, self in bone amber)
+   *  plus a LOWER GUN escape — big touch targets that work great on mobile. */
+  private setAimOverlay(show: boolean): void {
+    if (!show) {
+      if (this.aimOverlay?.parentNode) this.aimOverlay.parentNode.removeChild(this.aimOverlay);
+      this.aimOverlay = null;
+      return;
+    }
+    if (this.aimOverlay) return; // already showing
+
+    const wrap = document.createElement("div");
+    wrap.style.cssText =
+      "position:fixed;bottom:max(4%, env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);" +
+      "display:flex;flex-direction:column;align-items:center;gap:10px;z-index:9999;" +
+      "pointer-events:auto;width:min(94vw, 560px);";
+
+    const title = document.createElement("div");
+    title.textContent = "CHOOSE YOUR FATE";
+    title.style.cssText =
+      "font-family:'Courier New',monospace;font-size:clamp(11px,2.6vw,14px);letter-spacing:8px;" +
+      "color:#7d2626;text-shadow:0 0 12px rgba(160,20,20,0.7);text-transform:uppercase;";
+    wrap.appendChild(title);
+
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:12px;width:100%;";
+
+    const makeFateBtn = (label: string, sub: string, accent: string, glow: string): HTMLButtonElement => {
+      const btn = document.createElement("button");
+      btn.style.cssText =
+        "flex:1;min-height:64px;font-family:'Courier New',monospace;cursor:pointer;" +
+        `background:linear-gradient(180deg, rgba(10,6,6,0.92), rgba(22,8,8,0.92));` +
+        `border:2px solid ${accent};color:${accent};padding:12px 8px;` +
+        "display:flex;flex-direction:column;align-items:center;gap:4px;" +
+        "text-transform:uppercase;transition:box-shadow .15s,transform .1s;" +
+        `box-shadow:0 0 0 rgba(0,0,0,0), inset 0 0 18px rgba(0,0,0,0.8);` +
+        "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+      const main = document.createElement("span");
+      main.textContent = label;
+      main.style.cssText = "font-size:clamp(14px,3.4vw,19px);font-weight:700;letter-spacing:4px;";
+      const small = document.createElement("span");
+      small.textContent = sub;
+      small.style.cssText = `font-size:clamp(9px,2vw,11px);letter-spacing:2px;opacity:0.65;`;
+      btn.appendChild(main);
+      btn.appendChild(small);
+      const on = (): void => { btn.style.boxShadow = `0 0 22px ${glow}, inset 0 0 18px rgba(0,0,0,0.8)`; btn.style.transform = "scale(1.03)"; };
+      const off = (): void => { btn.style.boxShadow = "0 0 0 rgba(0,0,0,0), inset 0 0 18px rgba(0,0,0,0.8)"; btn.style.transform = "scale(1)"; };
+      btn.addEventListener("mouseenter", on);
+      btn.addEventListener("mouseleave", off);
+      btn.addEventListener("touchstart", on, { passive: true });
+      btn.addEventListener("touchend", off, { passive: true });
+      return btn;
+    };
+
+    const opponent: ParticipantId = this.localParticipant === "PLAYER" ? "AI" : "PLAYER";
+    const oppBtn = makeFateBtn("THE OPPONENT", "SEND THE BULLET ACROSS", "#c1352b", "rgba(193,53,43,0.55)");
+    oppBtn.addEventListener("click", () => this.onTargetClick(opponent));
+    const selfBtn = makeFateBtn("YOURSELF", "BITE THE BARREL", "#d9a441", "rgba(217,164,65,0.5)");
+    selfBtn.addEventListener("click", () => this.onTargetClick(this.localParticipant));
+    row.appendChild(oppBtn);
+    row.appendChild(selfBtn);
+    wrap.appendChild(row);
+
+    const cancel = document.createElement("button");
+    cancel.textContent = "LOWER THE GUN";
+    cancel.style.cssText =
+      "font-family:'Courier New',monospace;font-size:clamp(10px,2.4vw,12px);letter-spacing:4px;" +
+      "color:#6f675a;background:transparent;border:1px solid #3a332b;padding:8px 22px;" +
+      "cursor:pointer;text-transform:uppercase;min-height:38px;" +
+      "touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+    cancel.addEventListener("click", () => {
+      this.aiming = false;
+      this.firing = false;
+      this.updateMarkers();
+    });
+    wrap.appendChild(cancel);
+
+    document.body.appendChild(wrap);
+    this.aimOverlay = wrap;
   }
 
   // -------------------------------------------------------------------------
@@ -913,6 +1011,15 @@ export class Renderer3D implements IRenderer {
     this.raycaster.setFromCamera(this.pointer, cam);
     const hits = this.raycaster.intersectObjects(scene.children, true);
     for (const h of hits) {
+      // Skip hits belonging to a hidden subtree (raycaster doesn't check
+      // visibility itself — e.g. the retired target-marker rings).
+      let vis: THREE.Object3D | null = h.object;
+      let hidden = false;
+      while (vis) {
+        if (!vis.visible) { hidden = true; break; }
+        vis = vis.parent;
+      }
+      if (hidden) continue;
       let o: THREE.Object3D | null = h.object;
       while (o) {
         const entry = this.interactives.find((it) => it.root === o);
@@ -938,6 +1045,13 @@ export class Renderer3D implements IRenderer {
     const hits = this.raycaster.intersectObjects(scene.children, true);
     let hovered: THREE.Object3D | null = null;
     for (const h of hits) {
+      let vis: THREE.Object3D | null = h.object;
+      let hidden = false;
+      while (vis) {
+        if (!vis.visible) { hidden = true; break; }
+        vis = vis.parent;
+      }
+      if (hidden) continue;
       let o: THREE.Object3D | null = h.object;
       while (o) {
         if (this.interactives.some((it) => it.root === o)) {
@@ -1045,14 +1159,20 @@ export class Renderer3D implements IRenderer {
       return;
     }
     // A life was lost: keep the candle lit for now and queue the blow-out.
-    // Store the candle's index in the row so the close-up camera shot frames
-    // the exact dying candle (not always the middle one).
-    // Use the correct markers array: if player is taking damage, show player
-    // candles; if dealer is taking damage, show dealer candles.
-    const targetMarkers = participant === "PLAYER" ? this.playerHpMarkers : this.dealerHpMarkers;
+    // `markers` is already the correct row for whichever side took the hit
+    // (the caller passes playerHp or dealerHp), so the close-up camera frames
+    // the exact dying candle on the right side of the table.
+    this.renderHpMarkers(markers, shown, max);
+    const dyingIdx = max - shown;
     this.candleBlow = {
-      index: hp_left,
-      markers: targetMarkers,
+      markers,
+      index: dyingIdx,
+      max,
+      side,
+      target: hp,
+      startMs: this.now() + 1950,
+      dur: 800,
+      soundPlayed: false,
     };
   }
 
@@ -2200,18 +2320,21 @@ export class Renderer3D implements IRenderer {
         // "Aiming at the local player" == aiming at localParticipant.
         const da = this.dealerAimT;
         const aimingAtLocalPlayer = this.aiAimingTarget === this.localParticipant;
-        if (!aimingAtLocalPlayer) {
-          // Opponent aims across the table at US — gun lifts toward camera
-          // (they're shooting at the OTHER player, which is us from our seat).
+        if (aimingAtLocalPlayer) {
+          // Opponent aims across the table AT US: the gun rises on the
+          // opponent's side (-z) with the barrel flipped to face our camera.
+          // This mirrors the player's "aim at opponent" pose across z=0.
           targetPy += da * 1.6;
           targetPz -= da * 2.2;
           targetRx = da * -0.32 - recoilPitch;
           targetRy = -0.5 + da * (Math.PI + 0.5);
           targetRz = da * (Math.PI / 2);
         } else {
-          // Opponent aims at themselves (self-shot) — gun points backward at their own seat.
+          // Opponent self-shot: gun rises on the opponent's side (-z) with the
+          // barrel angled up toward their OWN head — never toward us.
+          // This mirrors the player's "aim at self" pose across z=0.
           targetPy += da * 2.0;
-          targetPz += da * 1.4;
+          targetPz -= da * 1.4;
           targetRx = da * 0.7 + recoilPitch;
           targetRy = -0.5 + da * 0.5;
           targetRz = da * (Math.PI / 2);
@@ -3003,6 +3126,10 @@ export class Renderer3D implements IRenderer {
       this.overlay.parentNode.removeChild(this.overlay);
     }
     this.overlay = undefined;
+    if (this.aimOverlay?.parentNode) {
+      this.aimOverlay.parentNode.removeChild(this.aimOverlay);
+    }
+    this.aimOverlay = null;
   }
 }
 
